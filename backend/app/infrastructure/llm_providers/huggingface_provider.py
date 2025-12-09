@@ -7,7 +7,7 @@ class HuggingFaceProvider(BaseLLMProvider):
 
     def __init__(self, api_key: str):
         self.api_key = api_key
-        self.base_url = "https://api-inference.huggingface.co/models"
+        self.base_url = "https://router.huggingface.co/hf-inference/models"
 
     @property
     def provider_id(self) -> str:
@@ -19,27 +19,36 @@ class HuggingFaceProvider(BaseLLMProvider):
 
     @property
     def available_models(self) -> list[str]:
+        # Using models that don't require gated access approval
         return [
-            "meta-llama/Meta-Llama-3-8B-Instruct",
-            "mistralai/Mistral-7B-Instruct-v0.2",
-            "microsoft/Phi-3-mini-4k-instruct",
-            "google/gemma-7b-it",
             "HuggingFaceH4/zephyr-7b-beta",
+            "tiiuae/falcon-7b-instruct",
+            "bigscience/bloom-560m",
+            "google/flan-t5-base",
+            "EleutherAI/gpt-neo-1.3B",
         ]
 
     async def is_available(self) -> bool:
         if not self.api_key:
+            print(f"HuggingFace: No API key configured")
             return False
         try:
             async with httpx.AsyncClient() as client:
-                # Test with a simple model endpoint
-                response = await client.get(
+                # Test with a simple POST request to a small model
+                response = await client.post(
                     f"{self.base_url}/gpt2",
-                    headers={"Authorization": f"Bearer {self.api_key}"},
-                    timeout=5.0,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json",
+                    },
+                    json={"inputs": "test"},
+                    timeout=10.0,
                 )
-                return response.status_code in [200, 503]  # 503 = model loading
-        except Exception:
+                print(f"HuggingFace availability check: status={response.status_code}")
+                # 200 = success, 503 = model loading (still available)
+                return response.status_code in [200, 503]
+        except Exception as e:
+            print(f"HuggingFace availability check failed: {e}")
             return False
 
     async def _call_api(self, prompt: str, model: str) -> tuple[str, int, int]:

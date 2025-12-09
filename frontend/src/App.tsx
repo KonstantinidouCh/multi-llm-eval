@@ -28,7 +28,7 @@ function App() {
       // Set default providers for demo
       setProviders([
         { id: 'groq', name: 'Groq', models: ['llama-3.1-70b-versatile', 'llama-3.1-8b-instant', 'mixtral-8x7b-32768'], enabled: true },
-        { id: 'huggingface', name: 'HuggingFace', models: ['meta-llama/Meta-Llama-3-8B-Instruct', 'mistralai/Mistral-7B-Instruct-v0.2'], enabled: true },
+        { id: 'huggingface', name: 'HuggingFace', models: ['HuggingFaceH4/zephyr-7b-beta', 'tiiuae/falcon-7b-instruct', 'google/flan-t5-base'], enabled: true },
         { id: 'ollama', name: 'Ollama (Local)', models: ['llama3', 'mistral', 'codellama'], enabled: true },
       ]);
     }
