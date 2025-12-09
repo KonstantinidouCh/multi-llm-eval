@@ -9,7 +9,6 @@ from ...domain.entities import (
 from ...config import get_settings, Settings
 from ...infrastructure.llm_providers import (
     GroqProvider,
-    TogetherProvider,
     HuggingFaceProvider,
     OllamaProvider,
 )
@@ -37,7 +36,6 @@ def get_providers_dict(settings: Settings = Depends(get_settings)):
     if _providers_dict is None:
         _providers_dict = {
             "groq": GroqProvider(settings.groq_api_key),
-            "together": TogetherProvider(settings.together_api_key),
             "huggingface": HuggingFaceProvider(settings.huggingface_api_key),
             "ollama": OllamaProvider(settings.ollama_base_url),
         }

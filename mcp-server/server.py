@@ -51,7 +51,7 @@ async def list_tools() -> list[Tool]:
                     "providers": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "List of provider IDs to use (e.g., ['groq', 'together', 'ollama'])",
+                        "description": "List of provider IDs to use (e.g., ['groq', 'huggingface', 'ollama'])",
                     },
                     "models": {
                         "type": "object",

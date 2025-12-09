@@ -9,7 +9,6 @@ class Settings(BaseSettings):
 
     # API Keys
     groq_api_key: str = ""
-    together_api_key: str = ""
     huggingface_api_key: str = ""
 
     # Ollama

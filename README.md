@@ -4,7 +4,7 @@ A comprehensive tool for comparing responses from multiple free LLM providers. E
 
 ## Features
 
-- **Multiple LLM Providers**: Groq, Together AI, HuggingFace, and Ollama (local)
+- **Multiple LLM Providers**: Groq, HuggingFace, and Ollama (local)
 - **Comprehensive Metrics**: Latency, tokens/second, quality scores, cost estimation
 - **Visual Comparison**: Charts and graphs for easy comparison
 - **LangGraph Workflow**: Orchestrated evaluation pipeline
@@ -74,11 +74,6 @@ npm run dev
 1. Go to https://console.groq.com
 2. Sign up for a free account
 3. Generate an API key
-
-### Together AI
-1. Go to https://api.together.xyz
-2. Sign up for a free account
-3. Get your API key from settings
 
 ### HuggingFace
 1. Go to https://huggingface.co/settings/tokens

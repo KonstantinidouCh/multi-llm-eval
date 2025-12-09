@@ -9,7 +9,6 @@ services:
       - "8000:8000"
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY:-}
-      - TOGETHER_API_KEY=${TOGETHER_API_KEY:-}
       - HUGGINGFACE_API_KEY=${HUGGINGFACE_API_KEY:-}
       - OLLAMA_BASE_URL=http://host.docker.internal:11434
     volumes:
