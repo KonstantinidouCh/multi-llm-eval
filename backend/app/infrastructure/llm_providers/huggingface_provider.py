@@ -1,14 +1,13 @@
 import httpx
-import asyncio
 from .base import BaseLLMProvider
 
 class HuggingFaceProvider(BaseLLMProvider):
-    """HuggingFace Inference API provider"""
+    """HuggingFace Inference Providers API (OpenAI-compatible)"""
 
     def __init__(self, api_key: str):
         self.api_key = api_key
-        # Use the standard inference URL
-        self.base_url = "https://api-inference.huggingface.co/models"
+        # New HuggingFace router endpoint (OpenAI-compatible)
+        self.base_url = "https://router.huggingface.co/v1/chat/completions"
 
     @property
     def provider_id(self) -> str:
@@ -21,16 +20,22 @@ class HuggingFaceProvider(BaseLLMProvider):
     @property
     def available_models(self) -> list[str]:
         return [
-            # High-Performance Chat Models (Recommended)
-            "mistralai/Mistral-7B-Instruct-v0.3",
-            "HuggingFaceH4/zephyr-7b-beta",
-            "microsoft/Phi-3-mini-4k-instruct",
-            
-            # DeepSeek (Check availability - usually requires Pro or might be busy)
-            "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
-            
-            # Llama 3 (Requires accepting license on HF website first!)
+            # Recommended models from HuggingFace Inference Providers
+            "google/gemma-2-2b-it",
+            "Qwen/Qwen2.5-7B-Instruct",
+            "Qwen/Qwen2.5-Coder-32B-Instruct",
             "meta-llama/Llama-3.1-8B-Instruct",
+            "mistralai/Mistral-7B-Instruct-v0.3",
+            # DeepSeek reasoning model
+            "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
+             # Additional recommended models
+            "deepseek-ai/DeepSeek-R1",                    # Full DeepSeek reasoning model
+            "Qwen/Qwen2.5-72B-Instruct",                  # Larger Qwen model
+            "Qwen/Qwen2.5-7B-Instruct-1M",               # Long context (1M tokens)
+            "meta-llama/Llama-3.3-70B-Instruct",         # Latest Llama 3.3
+            "mistralai/Mixtral-8x7B-Instruct-v0.1",      # Mixtral MoE
+            "microsoft/Phi-3-mini-4k-instruct",          # Small but capable
+            "google/gemma-2-9b-it",  
         ]
 
     async def is_available(self) -> bool:
@@ -42,59 +47,53 @@ class HuggingFaceProvider(BaseLLMProvider):
 
     async def _call_api(self, prompt: str, model: str) -> tuple[str, int, int]:
         async with httpx.AsyncClient() as client:
+            # OpenAI-compatible payload format
             payload = {
                 "model": model,
                 "messages": [{"role": "user", "content": prompt}],
                 "max_tokens": 1024,
                 "temperature": 0.7,
-                "stream": False 
+                "stream": False
             }
 
             headers = {
                 "Authorization": f"Bearer {self.api_key}",
                 "Content-Type": "application/json",
-                # CRITICAL FIX: Tells HF to wait for the model to load (Cold Start)
-                # instead of returning a 503 error immediately.
-                "x-wait-for-model": "true" 
             }
 
-            # Use the model-specific chat endpoint for better routing reliability
-            url = f"{self.base_url}/{model}/v1/chat/completions"
-            
             try:
                 response = await client.post(
-                    url,
+                    self.base_url,
                     headers=headers,
                     json=payload,
-                    timeout=120.0,  # Increased timeout for loading
+                    timeout=120.0,
                 )
-                
-                # Handle Loading State Explicitly if header fails
-                if response.status_code == 503:
-                    error_data = response.json()
-                    estimated_time = error_data.get("estimated_time", 20.0)
-                    print(f"Model {model} is cold. Loading... ({estimated_time}s)")
-                    await asyncio.sleep(estimated_time)
-                    # Retry once
-                    response = await client.post(
-                        url, headers=headers, json=payload, timeout=120.0
-                    )
 
                 response.raise_for_status()
                 data = response.json()
 
-                if "choices" in data and len(data["choices"]) > 0:
-                    content = data["choices"][0].get("message", {}).get("content", "")
-                else:
-                    raise Exception(f"Unexpected response format: {data}")
+                # OpenAI-compatible response format
+                content = data["choices"][0]["message"]["content"]
 
+                # Get token usage if available
                 usage = data.get("usage", {})
-                input_tokens = usage.get("prompt_tokens", len(prompt.split()) * 1.3)
-                output_tokens = usage.get("completion_tokens", len(content.split()) * 1.3)
+                input_tokens = usage.get("prompt_tokens", int(len(prompt.split()) * 1.3))
+                output_tokens = usage.get("completion_tokens", int(len(content.split()) * 1.3))
 
-                return content.strip(), int(input_tokens), int(output_tokens)
+                return content.strip(), input_tokens, output_tokens
 
             except httpx.HTTPStatusError as e:
+                error_detail = ""
+                try:
+                    error_data = e.response.json()
+                    error_detail = error_data.get("error", {}).get("message", e.response.text)
+                except:
+                    error_detail = e.response.text
+
                 if e.response.status_code == 401:
-                    raise Exception("Invalid API Key or Gated Model Access (Accept License on HF)")
-                raise e
+                    raise Exception("Invalid HuggingFace API Key")
+                if e.response.status_code == 404:
+                    raise Exception(f"Model {model} not found or not available")
+                if e.response.status_code == 422:
+                    raise Exception(f"Model {model} validation error: {error_detail}")
+                raise Exception(f"HuggingFace API error: {e.response.status_code} - {error_detail}")

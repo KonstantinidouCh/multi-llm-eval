@@ -15,6 +15,8 @@ from ...infrastructure.llm_providers import (
 from ...infrastructure.persistence import InMemoryEvaluationRepository
 from ...infrastructure.langgraph import EvaluationGraph
 from ...application.use_cases import MetricsCalculator
+from fastapi.responses import StreamingResponse
+import json
 
 router = APIRouter(prefix="/api")
 
@@ -121,3 +123,33 @@ async def get_evaluation(evaluation_id: str):
 async def health_check():
     """Health check endpoint"""
     return {"status": "healthy"}
+
+@router.post("/evaluate/stream")
+async def evaluate_stream(
+    request: EvaluationRequest,
+    settings: Settings = Depends(get_settings),
+):
+    """Stream evaluation progress"""
+    if not request.query.strip():
+        raise HTTPException(status_code=400, detail="Query cannot be empty")
+
+    if not request.selections:
+        raise HTTPException(status_code=400, detail="At least one model must be selected")
+
+    graph = get_evaluation_graph(settings)
+
+    async def event_generator():
+        try:
+            async for event in graph.run_streaming(request):
+                yield f"data: {json.dumps(event)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        }
+    )

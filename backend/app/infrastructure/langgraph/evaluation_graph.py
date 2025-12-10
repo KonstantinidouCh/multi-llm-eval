@@ -16,6 +16,8 @@ from ...application.use_cases import MetricsCalculator
 from langgraph.prebuilt import ToolNode
 from .tools import evaluation_tools
 
+from typing import AsyncGenerator
+
 
 class EvaluationState(TypedDict):
     """State for the evaluation graph"""
@@ -288,6 +290,68 @@ class EvaluationGraph:
             "tool_results": tool_results,
             "messages": [HumanMessage(content=f"Ran {len(evaluation_tools)} analysis tools")]
         }
+    
+    async def run_streaming(self, request: EvaluationRequest) -> AsyncGenerator[dict, None]:
+        """Execute the evaluation workflow with streaming updates"""
+        initial_state: EvaluationState = {
+            "query": request.query,
+            "selections": [sel.model_dump() for sel in request.selections],
+            "responses": [],
+            "comparison_summary": None,
+            "messages": [],
+            "error": None,
+            "retry_count": 0,
+            "failed_selections": [],
+            "tools_results": {},
+        }
+
+        # Use astream to get node outputs as they complete
+        final_state = initial_state.copy()
+        
+        async for chunk in self.graph.astream(initial_state, stream_mode="updates"):
+            for node_name, node_output in chunk.items():
+                # Filter out non-serializable data (like HumanMessage objects)
+                serializable_output = {}
+                if isinstance(node_output, dict):
+                    for key, value in node_output.items():
+                        if key == "messages":
+                            # Convert messages to strings
+                            serializable_output[key] = [str(m.content) if hasattr(m, 'content') else str(m) for m in value]
+                        elif key == "responses":
+                            # Convert LLMResponse objects to dicts
+                            serializable_output[key] = [r.model_dump(mode='json') if hasattr(r, 'model_dump') else r for r in value]
+                        elif key == "comparison_summary" and value is not None:
+                            serializable_output[key] = value.model_dump(mode='json') if hasattr(value, 'model_dump') else value
+                        else:
+                            serializable_output[key] = value
+                
+                yield {
+                    "type": "node_complete",
+                    "node": node_name,
+                    "data": serializable_output
+                }
+                
+                # Merge updates into final state (INSIDE the loop now!)
+                if isinstance(node_output, dict):
+                    for key, value in node_output.items():
+                        if key == "responses" and isinstance(value, list):
+                            # Replace responses (the graph accumulates them)
+                            final_state[key] = value
+                        elif key == "comparison_summary":
+                            final_state[key] = value
+                        elif key not in ["messages"]:  # Skip messages
+                            final_state[key] = value
+
+        # Yield final result
+        yield {
+            "type": "complete",
+            "result": EvaluationResult(
+                query=request.query,
+                responses=final_state.get("responses", []),
+                comparison_summary=final_state.get("comparison_summary") or ComparisonSummary(),
+            ).model_dump(mode='json')
+        }
+
 
     async def run(self, request: EvaluationRequest) -> EvaluationResult:
         """Execute the evaluation workflow"""
