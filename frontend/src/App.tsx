@@ -11,7 +11,8 @@ import {
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Activity, History, Settings } from "lucide-react";
+import { Progress } from "@/components/ui/progress";
+import { Activity, History, Settings, CheckCircle2, Loader2, AlertCircle } from "lucide-react";
 
 function App() {
   const [providers, setProviders] = useState<LLMProvider[]>([]);
@@ -127,38 +128,115 @@ function App() {
     }
   };
 
+  const allNodes = [
+    "validate_input",
+    "parallel_evaluation",
+    "retry_failed",
+    "error_recovery",
+    "calculate_metrics",
+    "llm_judge",
+    "generate_summary",
+  ];
+
+  const nodeLabels: Record<string, string> = {
+    validate_input: "Validate",
+    parallel_evaluation: "Evaluate",
+    retry_failed: "Retry",
+    error_recovery: "Recovery",
+    calculate_metrics: "Metrics",
+    llm_judge: "Judge",
+    generate_summary: "Summary",
+  };
+
   return (
-    <div className="min-h-screen bg-background">
-      <header className="border-b">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-950 dark:to-slate-900">
+      <header className="border-b bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm sticky top-0 z-50">
         <div className="container mx-auto px-4 py-4">
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Activity className="h-6 w-6" />
-              <h1 className="text-xl font-bold">Multi-LLM Eval</h1>
+            <div className="flex items-center gap-3">
+              <div className="p-2 rounded-lg bg-gradient-to-br from-violet-500 to-purple-600 text-white">
+                <Activity className="h-5 w-5" />
+              </div>
+              <h1 className="text-xl font-bold bg-gradient-to-r from-violet-600 to-purple-600 bg-clip-text text-transparent">
+                Multi-LLM Eval
+              </h1>
             </div>
-            <Badge variant="outline">v0.1.0</Badge>
+            <Badge variant="outline" className="border-violet-300 text-violet-600">v0.1.0</Badge>
           </div>
         </div>
       </header>
 
+      {/* Streaming Progress Bar - Fixed at top */}
+      {isLoading && (
+        <div className="bg-gradient-to-r from-violet-500 via-purple-500 to-fuchsia-500 text-white shadow-lg">
+          <div className="container mx-auto px-4 py-3">
+            <div className="flex items-center gap-4">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              <span className="font-medium">{streamingStatus}</span>
+              <div className="flex-1 flex items-center gap-1">
+                {allNodes.map((node, i) => {
+                  const isCompleted = completedNodes.includes(node);
+                  const isCurrent = !isCompleted && completedNodes.length === i;
+                  return (
+                    <div key={node} className="flex items-center">
+                      <div
+                        className={`flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium transition-all ${
+                          isCompleted
+                            ? "bg-white/30 text-white"
+                            : isCurrent
+                            ? "bg-white text-purple-600 animate-pulse"
+                            : "bg-white/10 text-white/50"
+                        }`}
+                      >
+                        {isCompleted && <CheckCircle2 className="h-3 w-3" />}
+                        {nodeLabels[node]}
+                      </div>
+                      {i < allNodes.length - 1 && (
+                        <div className={`w-4 h-0.5 mx-1 ${isCompleted ? "bg-white/50" : "bg-white/20"}`} />
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <Progress
+                value={(completedNodes.length / allNodes.length) * 100}
+                className="w-24 h-2 bg-white/20"
+              />
+            </div>
+          </div>
+        </div>
+      )}
+
       <main className="container mx-auto px-4 py-6">
         <Tabs defaultValue="evaluate" className="space-y-6">
-          <TabsList>
-            <TabsTrigger value="evaluate" className="flex items-center gap-2">
+          <TabsList className="bg-white dark:bg-slate-800 shadow-sm">
+            <TabsTrigger value="evaluate" className="flex items-center gap-2 data-[state=active]:bg-violet-100 data-[state=active]:text-violet-700">
               <Activity className="h-4 w-4" />
               Evaluate
             </TabsTrigger>
-            <TabsTrigger value="history" className="flex items-center gap-2">
+            <TabsTrigger value="history" className="flex items-center gap-2 data-[state=active]:bg-violet-100 data-[state=active]:text-violet-700">
               <History className="h-4 w-4" />
               History
             </TabsTrigger>
-            <TabsTrigger value="settings" className="flex items-center gap-2">
+            <TabsTrigger value="settings" className="flex items-center gap-2 data-[state=active]:bg-violet-100 data-[state=active]:text-violet-700">
               <Settings className="h-4 w-4" />
               Settings
             </TabsTrigger>
           </TabsList>
 
           <TabsContent value="evaluate" className="space-y-6">
+            {/* Error display at top */}
+            {error && (
+              <Card className="border-red-300 bg-red-50 dark:bg-red-950/30">
+                <CardContent className="pt-6">
+                  <div className="flex items-center gap-2 text-red-600">
+                    <AlertCircle className="h-5 w-5" />
+                    <p className="font-medium">{error}</p>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             <div className="grid lg:grid-cols-3 gap-6">
               <div className="lg:col-span-1">
                 <QueryInput
@@ -166,53 +244,21 @@ function App() {
                   onSubmit={handleSubmit}
                   isLoading={isLoading}
                 />
-
-                {/* Streaming Progress */}
-                {isLoading && streamingStatus && (
-                  <Card className="mt-4">
-                    <CardContent className="pt-4">
-                      <div className="space-y-2">
-                        <div className="flex items-center gap-2">
-                          <div className="h-2 w-2 bg-blue-500 rounded-full animate-pulse" />
-                          <span className="text-sm font-medium">
-                            {streamingStatus}
-                          </span>
-                        </div>
-                        {completedNodes.length > 0 && (
-                          <div className="flex flex-wrap gap-1 mt-2">
-                            {completedNodes.map((node, i) => (
-                              <Badge
-                                key={i}
-                                variant="secondary"
-                                className="text-xs"
-                              >
-                                {node}
-                              </Badge>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </CardContent>
-                  </Card>
-                )}
               </div>
 
               <div className="lg:col-span-2">
-                {error && (
-                  <Card className="border-destructive">
-                    <CardContent className="pt-6">
-                      <p className="text-destructive">{error}</p>
-                    </CardContent>
-                  </Card>
-                )}
                 {currentResult && <ResultsDisplay result={currentResult} />}
                 {!currentResult && !error && !isLoading && (
-                  <Card>
+                  <Card className="border-dashed border-2 border-slate-200 dark:border-slate-700 bg-white/50 dark:bg-slate-800/50">
                     <CardContent className="pt-6">
-                      <p className="text-muted-foreground text-center py-12">
-                        Select providers and enter a query to compare LLM
-                        responses
-                      </p>
+                      <div className="text-center py-12">
+                        <div className="mx-auto w-16 h-16 rounded-full bg-violet-100 dark:bg-violet-900/30 flex items-center justify-center mb-4">
+                          <Activity className="h-8 w-8 text-violet-500" />
+                        </div>
+                        <p className="text-muted-foreground">
+                          Select models and enter a query to compare LLM responses
+                        </p>
+                      </div>
                     </CardContent>
                   </Card>
                 )}
