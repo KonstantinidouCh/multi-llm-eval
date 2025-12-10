@@ -87,8 +87,9 @@ function App() {
             validate_input: "Validated input",
             parallel_evaluation: "Evaluating models...",
             retry_failed: "Retrying failed models...",
+            error_recovery: "Recovering from errors...",
             calculate_metrics: "Calculating metrics...",
-            run_tools: "Running analysis tools...",
+            llm_judge: "LLM Judge evaluating responses...",
             generate_summary: "Generating summary...",
           };
           setStreamingStatus(statusMap[event.node] || event.node);
