@@ -13,6 +13,8 @@ from ...domain.entities import (
 )
 from ...domain.repositories import LLMProviderInterface
 from ...application.use_cases import MetricsCalculator
+from langgraph.prebuilt import ToolNode
+from .tools import evaluation_tools
 
 
 class EvaluationState(TypedDict):
@@ -23,6 +25,9 @@ class EvaluationState(TypedDict):
     comparison_summary: ComparisonSummary | None
     messages: Annotated[Sequence[BaseMessage], add]
     error: str | None
+    retry_count: int
+    failed_selections: list[dict]  # track which ones failed
+    tools_results: dict # store tool analysis results
 
 
 class EvaluationGraph:
@@ -37,6 +42,15 @@ class EvaluationGraph:
         self.metrics_calculator = metrics_calculator
         self.graph = self._build_graph()
 
+    def _should_retry(self, state: EvaluationState) -> str:
+        """Decide whether to retry failed evaluations"""
+        failed = [r for r in state["responses"] if r.error]
+        retry_count = state.get("retry_count", 0)
+        
+        if failed and retry_count < 2:
+            return "retry_failed"
+        return "calculate_metrics"
+
     def _build_graph(self) -> StateGraph:
         """Build the evaluation workflow graph"""
 
@@ -46,7 +60,9 @@ class EvaluationGraph:
         # Add nodes
         workflow.add_node("validate_input", self._validate_input)
         workflow.add_node("parallel_evaluation", self._parallel_evaluation)
+        workflow.add_node("retry_failed", self._retry_failed)
         workflow.add_node("calculate_metrics", self._calculate_metrics)
+        workflow.add_node("run_tools", self._run_tools)
         workflow.add_node("generate_summary", self._generate_summary)
 
         # Set entry point
@@ -54,11 +70,22 @@ class EvaluationGraph:
 
         # Add edges
         workflow.add_edge("validate_input", "parallel_evaluation")
-        workflow.add_edge("parallel_evaluation", "calculate_metrics")
-        workflow.add_edge("calculate_metrics", "generate_summary")
+
+        workflow.add_conditional_edges(
+            "parallel_evaluation",
+            self._should_retry,
+            {
+                "retry_failed": "retry_failed",
+                "calculate_metrics": "calculate_metrics"
+            }
+        )
+        workflow.add_edge("retry_failed", "calculate_metrics")
+        workflow.add_edge("calculate_metrics", "run_tools")
+        workflow.add_edge("run_tools", "generate_summary")
         workflow.add_edge("generate_summary", END)
 
         return workflow.compile()
+        
 
     async def _validate_input(self, state: EvaluationState) -> Dict[str, Any]:
         """Validate the evaluation request"""
@@ -119,6 +146,40 @@ class EvaluationGraph:
             "responses": valid_responses,
             "messages": [HumanMessage(content=f"Completed {len(valid_responses)} evaluations")]
         }
+    
+    async def _retry_failed(self, state: EvaluationState) -> Dict[str, Any]:
+        """Retry failed evaluations"""
+        failed_responses = [r for r in state["responses"] if r.error]
+        successful_responses = [r for r in state["responses"] if not r.error]
+        
+        # Find selections that failed
+        failed_provider_models = {(r.provider, r.model) for r in failed_responses}
+        failed_selections = [
+            sel for sel in state["selections"]
+            if (sel["provider"], sel["model"]) in failed_provider_models
+        ]
+        
+        # Retry failed ones
+        async def evaluate_selection(selection: dict) -> LLMResponse:
+            provider = self.providers[selection["provider"]]
+            return await provider.generate(state["query"], selection["model"])
+        
+        tasks = [evaluate_selection(sel) for sel in failed_selections]
+        retry_responses = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Process retry results
+        new_responses = []
+        for resp in retry_responses:
+            if isinstance(resp, LLMResponse):
+                new_responses.append(resp)
+        
+        # Combine successful + retried (replacing old failed ones)
+        return {
+            "responses": successful_responses + new_responses,
+            "retry_count": state.get("retry_count", 0) + 1,
+            "messages": [HumanMessage(content=f"Retried {len(failed_selections)} failed evaluations")]
+        }
+    
 
     async def _calculate_metrics(self, state: EvaluationState) -> Dict[str, Any]:
         """Calculate quality metrics for all responses"""
@@ -199,6 +260,34 @@ class EvaluationGraph:
             "comparison_summary": summary,
             "messages": [HumanMessage(content="Generated comparison summary")]
         }
+    
+    async def _run_tools(self, state: EvaluationState) -> Dict[str, Any]:
+        """Run analysis tools on responses"""
+        from .tools import evaluation_tools
+        
+        tool_results = {}
+        
+        for response in state["responses"]:
+            if response.error:
+                continue
+                
+            response_key = f"{response.provider}/{response.model}"
+            tool_results[response_key] = {}
+            
+            for tool in evaluation_tools:
+                try:
+                    if tool.name == "find_key_topics":
+                        result = tool.invoke({"query": state["query"], "response": response.response})
+                    else:
+                        result = tool.invoke({"response": response.response})
+                    tool_results[response_key][tool.name] = result
+                except Exception as e:
+                    tool_results[response_key][tool.name] = f"Error: {str(e)}"
+        
+        return {
+            "tool_results": tool_results,
+            "messages": [HumanMessage(content=f"Ran {len(evaluation_tools)} analysis tools")]
+        }
 
     async def run(self, request: EvaluationRequest) -> EvaluationResult:
         """Execute the evaluation workflow"""
@@ -209,6 +298,8 @@ class EvaluationGraph:
             "comparison_summary": None,
             "messages": [],
             "error": None,
+            "retry_count": 0,
+            "failed_selections": [],
         }
 
         # Run the graph

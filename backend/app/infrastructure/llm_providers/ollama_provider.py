@@ -20,8 +20,8 @@ class OllamaProvider(BaseLLMProvider):
     def available_models(self) -> list[str]:
         return [
             "llama3",
+            "llama3.2",
             "llama3:8b",
-            "llama3:70b",
             "mistral",
             "mistral:7b",
             "codellama",
