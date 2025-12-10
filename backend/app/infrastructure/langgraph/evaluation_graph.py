@@ -18,8 +18,7 @@ from ...application.use_cases import MetricsCalculator
 class EvaluationState(TypedDict):
     """State for the evaluation graph"""
     query: str
-    providers_to_evaluate: list[str]
-    models_config: dict[str, str]
+    selections: list[dict]  # List of {provider, model} pairs
     responses: Annotated[list[LLMResponse], add]
     comparison_summary: ComparisonSummary | None
     messages: Annotated[Sequence[BaseMessage], add]
@@ -68,16 +67,16 @@ class EvaluationGraph:
         if not state["query"] or not state["query"].strip():
             errors.append("Query cannot be empty")
 
-        if not state["providers_to_evaluate"]:
-            errors.append("At least one provider must be selected")
+        if not state["selections"]:
+            errors.append("At least one model must be selected")
 
         # Check if providers exist
         invalid_providers = [
-            p for p in state["providers_to_evaluate"]
-            if p not in self.providers
+            sel["provider"] for sel in state["selections"]
+            if sel["provider"] not in self.providers
         ]
         if invalid_providers:
-            errors.append(f"Invalid providers: {invalid_providers}")
+            errors.append(f"Invalid providers: {list(set(invalid_providers))}")
 
         if errors:
             return {
@@ -90,23 +89,19 @@ class EvaluationGraph:
         }
 
     async def _parallel_evaluation(self, state: EvaluationState) -> Dict[str, Any]:
-        """Run evaluations in parallel across all providers"""
+        """Run evaluations in parallel across all selected models"""
         if state.get("error"):
             return {}
 
-        async def evaluate_provider(provider_id: str) -> LLMResponse:
-            provider = self.providers[provider_id]
-            model = state["models_config"].get(
-                provider_id,
-                provider.available_models[0] if provider.available_models else ""
-            )
-            return await provider.generate(state["query"], model)
+        async def evaluate_selection(selection: dict) -> LLMResponse:
+            provider = self.providers[selection["provider"]]
+            return await provider.generate(state["query"], selection["model"])
 
         # Run all evaluations concurrently
         tasks = [
-            evaluate_provider(pid)
-            for pid in state["providers_to_evaluate"]
-            if pid in self.providers
+            evaluate_selection(sel)
+            for sel in state["selections"]
+            if sel["provider"] in self.providers
         ]
 
         responses = await asyncio.gather(*tasks, return_exceptions=True)
@@ -209,8 +204,7 @@ class EvaluationGraph:
         """Execute the evaluation workflow"""
         initial_state: EvaluationState = {
             "query": request.query,
-            "providers_to_evaluate": request.providers,
-            "models_config": request.models,
+            "selections": [sel.model_dump() for sel in request.selections],
             "responses": [],
             "comparison_summary": None,
             "messages": [],

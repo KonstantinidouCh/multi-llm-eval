@@ -78,13 +78,13 @@ async def evaluate(
     request: EvaluationRequest,
     settings: Settings = Depends(get_settings),
 ):
-    """Evaluate a query across multiple LLM providers"""
+    """Evaluate a query across multiple LLM models"""
     if not request.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
-    if not request.providers:
+    if not request.selections:
         raise HTTPException(
-            status_code=400, detail="At least one provider must be selected"
+            status_code=400, detail="At least one model must be selected"
         )
 
     graph = get_evaluation_graph(settings)

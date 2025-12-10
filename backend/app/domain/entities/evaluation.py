@@ -11,10 +11,14 @@ class LLMProvider(BaseModel):
     enabled: bool = True
 
 
+class ModelSelection(BaseModel):
+    provider: str
+    model: str
+
+
 class EvaluationRequest(BaseModel):
     query: str
-    providers: list[str]
-    models: dict[str, str]
+    selections: list[ModelSelection]
 
 
 class MetricResult(BaseModel):

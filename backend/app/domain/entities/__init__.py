@@ -1,5 +1,6 @@
 from .evaluation import (
     LLMProvider,
+    ModelSelection,
     EvaluationRequest,
     MetricResult,
     LLMResponse,
@@ -9,6 +10,7 @@ from .evaluation import (
 
 __all__ = [
     "LLMProvider",
+    "ModelSelection",
     "EvaluationRequest",
     "MetricResult",
     "LLMResponse",

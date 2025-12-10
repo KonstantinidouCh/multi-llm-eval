@@ -4,7 +4,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
-import { Send, Loader2 } from 'lucide-react';
+import { Send, Loader2, X } from 'lucide-react';
 
 interface Provider {
   id: string;
@@ -13,49 +13,48 @@ interface Provider {
   enabled: boolean;
 }
 
+interface ModelSelection {
+  provider: string;
+  model: string;
+}
+
 interface QueryInputProps {
   providers: Provider[];
-  onSubmit: (query: string, selectedProviders: string[], selectedModels: Record<string, string>) => void;
+  onSubmit: (query: string, selections: ModelSelection[]) => void;
   isLoading: boolean;
 }
 
 export function QueryInput({ providers, onSubmit, isLoading }: QueryInputProps) {
   const [query, setQuery] = useState('');
-  const [selectedProviders, setSelectedProviders] = useState<string[]>([]);
-  const [selectedModels, setSelectedModels] = useState<Record<string, string>>({});
+  const [selections, setSelections] = useState<ModelSelection[]>([]);
 
-  const toggleProvider = (providerId: string) => {
-    setSelectedProviders(prev => {
-      if (prev.includes(providerId)) {
-        const newSelected = prev.filter(id => id !== providerId);
-        const newModels = { ...selectedModels };
-        delete newModels[providerId];
-        setSelectedModels(newModels);
-        return newSelected;
+  const toggleModel = (providerId: string, model: string) => {
+    setSelections(prev => {
+      const exists = prev.some(s => s.provider === providerId && s.model === model);
+      if (exists) {
+        return prev.filter(s => !(s.provider === providerId && s.model === model));
       } else {
-        const provider = providers.find(p => p.id === providerId);
-        if (provider && provider.models.length > 0) {
-          setSelectedModels(prev => ({
-            ...prev,
-            [providerId]: provider.models[0]
-          }));
-        }
-        return [...prev, providerId];
+        return [...prev, { provider: providerId, model }];
       }
     });
   };
 
-  const handleModelChange = (providerId: string, model: string) => {
-    setSelectedModels(prev => ({
-      ...prev,
-      [providerId]: model
-    }));
+  const isModelSelected = (providerId: string, model: string) => {
+    return selections.some(s => s.provider === providerId && s.model === model);
+  };
+
+  const removeSelection = (providerId: string, model: string) => {
+    setSelections(prev => prev.filter(s => !(s.provider === providerId && s.model === model)));
   };
 
   const handleSubmit = () => {
-    if (query.trim() && selectedProviders.length > 0) {
-      onSubmit(query, selectedProviders, selectedModels);
+    if (query.trim() && selections.length > 0) {
+      onSubmit(query, selections);
     }
+  };
+
+  const getProviderName = (providerId: string) => {
+    return providers.find(p => p.id === providerId)?.name || providerId;
   };
 
   return (
@@ -76,51 +75,56 @@ export function QueryInput({ providers, onSubmit, isLoading }: QueryInputProps) 
         </div>
 
         <div className="space-y-2">
-          <Label>Select LLM Providers</Label>
-          <div className="flex flex-wrap gap-2">
+          <Label>Select Models to Compare</Label>
+          <div className="space-y-3">
             {providers.map(provider => (
-              <Badge
-                key={provider.id}
-                variant={selectedProviders.includes(provider.id) ? 'default' : 'outline'}
-                className="cursor-pointer"
-                onClick={() => provider.enabled && toggleProvider(provider.id)}
-              >
-                {provider.name}
-                {!provider.enabled && ' (unavailable)'}
-              </Badge>
+              <div key={provider.id} className="space-y-2">
+                <div className="text-sm font-medium text-muted-foreground">
+                  {provider.name}
+                  {!provider.enabled && ' (unavailable)'}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {provider.models.map(model => (
+                    <Badge
+                      key={`${provider.id}-${model}`}
+                      variant={isModelSelected(provider.id, model) ? 'default' : 'outline'}
+                      className={`cursor-pointer ${!provider.enabled ? 'opacity-50' : ''}`}
+                      onClick={() => provider.enabled && toggleModel(provider.id, model)}
+                    >
+                      {model}
+                    </Badge>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         </div>
 
-        {selectedProviders.length > 0 && (
+        {selections.length > 0 && (
           <div className="space-y-2">
-            <Label>Select Models</Label>
-            <div className="grid gap-2">
-              {selectedProviders.map(providerId => {
-                const provider = providers.find(p => p.id === providerId);
-                if (!provider) return null;
-                return (
-                  <div key={providerId} className="flex items-center gap-2">
-                    <span className="text-sm font-medium w-32">{provider.name}:</span>
-                    <select
-                      value={selectedModels[providerId] || ''}
-                      onChange={(e) => handleModelChange(providerId, e.target.value)}
-                      className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm"
-                    >
-                      {provider.models.map(model => (
-                        <option key={model} value={model}>{model}</option>
-                      ))}
-                    </select>
-                  </div>
-                );
-              })}
+            <Label>Selected Models ({selections.length})</Label>
+            <div className="flex flex-wrap gap-2">
+              {selections.map(sel => (
+                <Badge
+                  key={`${sel.provider}-${sel.model}`}
+                  variant="secondary"
+                  className="flex items-center gap-1"
+                >
+                  <span className="text-xs text-muted-foreground">{getProviderName(sel.provider)}:</span>
+                  {sel.model}
+                  <X
+                    className="h-3 w-3 cursor-pointer hover:text-destructive"
+                    onClick={() => removeSelection(sel.provider, sel.model)}
+                  />
+                </Badge>
+              ))}
             </div>
           </div>
         )}
 
         <Button
           onClick={handleSubmit}
-          disabled={!query.trim() || selectedProviders.length === 0 || isLoading}
+          disabled={!query.trim() || selections.length === 0 || isLoading}
           className="w-full"
         >
           {isLoading ? (
@@ -131,7 +135,7 @@ export function QueryInput({ providers, onSubmit, isLoading }: QueryInputProps) 
           ) : (
             <>
               <Send className="mr-2 h-4 w-4" />
-              Compare LLMs
+              Compare {selections.length} Model{selections.length !== 1 ? 's' : ''}
             </>
           )}
         </Button>

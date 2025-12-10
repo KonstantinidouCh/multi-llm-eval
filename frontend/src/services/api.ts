@@ -14,10 +14,14 @@ export interface LLMProvider {
   enabled: boolean;
 }
 
+export interface ModelSelection {
+  provider: string;
+  model: string;
+}
+
 export interface EvaluationRequest {
   query: string;
-  providers: string[];
-  models: Record<string, string>;
+  selections: ModelSelection[];
 }
 
 export interface MetricResult {

@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { QueryInput } from '@/components/QueryInput';
 import { ResultsDisplay } from '@/components/ResultsDisplay';
-import { llmApi, type EvaluationResult, type LLMProvider } from '@/services/api';
+import { llmApi, type EvaluationResult, type LLMProvider, type ModelSelection } from '@/services/api';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -43,15 +43,14 @@ function App() {
     }
   };
 
-  const handleSubmit = async (query: string, selectedProviders: string[], selectedModels: Record<string, string>) => {
+  const handleSubmit = async (query: string, selections: ModelSelection[]) => {
     setIsLoading(true);
     setError(null);
 
     try {
       const result = await llmApi.evaluate({
         query,
-        providers: selectedProviders,
-        models: selectedModels,
+        selections,
       });
       setCurrentResult(result);
       setHistory(prev => [result, ...prev]);
