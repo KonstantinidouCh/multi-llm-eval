@@ -25,7 +25,6 @@ class HuggingFaceProvider(BaseLLMProvider):
             "Qwen/Qwen2.5-7B-Instruct",
             "Qwen/Qwen2.5-Coder-32B-Instruct",
             "meta-llama/Llama-3.1-8B-Instruct",
-            "mistralai/Mistral-7B-Instruct-v0.3",
             # DeepSeek reasoning model
             "deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B",
              # Additional recommended models

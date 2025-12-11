@@ -1,18 +1,29 @@
 import { useState, useEffect } from "react";
 import { QueryInput } from "@/components/QueryInput";
 import { ResultsDisplay } from "@/components/ResultsDisplay";
+import { llmApi } from "@/services/api";
 import {
-  llmApi,
   type EvaluationResult,
   type LLMProvider,
   type ModelSelection,
   type StreamEvent,
-} from "@/services/api";
+} from "@/types/api";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Activity, History, Settings, CheckCircle2, Loader2, AlertCircle } from "lucide-react";
+import {
+  Activity,
+  History,
+  Settings,
+  CheckCircle2,
+  Loader2,
+  AlertCircle,
+  ChevronUp,
+  ChevronDown,
+} from "lucide-react";
+import { Button } from "./components/ui/button";
+import { ComparisonSummary } from "./components/ComparisonSummary";
 
 function App() {
   const [providers, setProviders] = useState<LLMProvider[]>([]);
@@ -26,6 +37,7 @@ function App() {
   // Streaming state
   const [streamingStatus, setStreamingStatus] = useState<string | null>(null);
   const [completedNodes, setCompletedNodes] = useState<string[]>([]);
+  const [isOpen, setIsOpen] = useState(false);
 
   useEffect(() => {
     loadProviders();
@@ -161,7 +173,12 @@ function App() {
                 Multi-LLM Eval
               </h1>
             </div>
-            <Badge variant="outline" className="border-violet-300 text-violet-600">v0.1.0</Badge>
+            <Badge
+              variant="outline"
+              className="border-violet-300 text-violet-600"
+            >
+              v0.1.0
+            </Badge>
           </div>
         </div>
       </header>
@@ -192,7 +209,11 @@ function App() {
                         {nodeLabels[node]}
                       </div>
                       {i < allNodes.length - 1 && (
-                        <div className={`w-4 h-0.5 mx-1 ${isCompleted ? "bg-white/50" : "bg-white/20"}`} />
+                        <div
+                          className={`w-4 h-0.5 mx-1 ${
+                            isCompleted ? "bg-white/50" : "bg-white/20"
+                          }`}
+                        />
                       )}
                     </div>
                   );
@@ -210,15 +231,24 @@ function App() {
       <main className="container mx-auto px-4 py-6">
         <Tabs defaultValue="evaluate" className="space-y-6">
           <TabsList className="bg-white dark:bg-slate-800 shadow-sm">
-            <TabsTrigger value="evaluate" className="flex items-center gap-2 data-[state=active]:bg-violet-100 data-[state=active]:text-violet-700">
+            <TabsTrigger
+              value="evaluate"
+              className="flex items-center gap-2 data-[state=active]:bg-violet-100 data-[state=active]:text-violet-700"
+            >
               <Activity className="h-4 w-4" />
               Evaluate
             </TabsTrigger>
-            <TabsTrigger value="history" className="flex items-center gap-2 data-[state=active]:bg-violet-100 data-[state=active]:text-violet-700">
+            <TabsTrigger
+              value="history"
+              className="flex items-center gap-2 data-[state=active]:bg-violet-100 data-[state=active]:text-violet-700"
+            >
               <History className="h-4 w-4" />
               History
             </TabsTrigger>
-            <TabsTrigger value="settings" className="flex items-center gap-2 data-[state=active]:bg-violet-100 data-[state=active]:text-violet-700">
+            <TabsTrigger
+              value="settings"
+              className="flex items-center gap-2 data-[state=active]:bg-violet-100 data-[state=active]:text-violet-700"
+            >
               <Settings className="h-4 w-4" />
               Settings
             </TabsTrigger>
@@ -256,7 +286,8 @@ function App() {
                           <Activity className="h-8 w-8 text-violet-500" />
                         </div>
                         <p className="text-muted-foreground">
-                          Select models and enter a query to compare LLM responses
+                          Select models and enter a query to compare LLM
+                          responses
                         </p>
                       </div>
                     </CardContent>
@@ -282,7 +313,7 @@ function App() {
                       <div
                         key={item.id || index}
                         className="p-4 border rounded-lg cursor-pointer hover:bg-muted/50"
-                        onClick={() => setCurrentResult(item)}
+                        onClick={() => setIsOpen(!isOpen)}
                       >
                         <div className="flex justify-between items-start">
                           <div>
@@ -296,6 +327,28 @@ function App() {
                           <Badge variant="outline">
                             {new Date(item.timestamp).toLocaleDateString()}
                           </Badge>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0"
+                          >
+                            {isOpen ? (
+                              <ChevronUp className="h-4 w-4 text-slate-500" />
+                            ) : (
+                              <ChevronDown className="h-4 w-4 text-slate-500" />
+                            )}
+                          </Button>
+                        </div>
+                        <div
+                          className={`grid transition-[grid-template-rows] duration-300 ease-out ${
+                            isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+                          }`}
+                        >
+                          <div className="overflow-hidden">
+                            <div className="p-4 text-slate-600 dark:text-slate-300 leading-relaxed border-t border-violet-100 dark:border-violet-900/50 mt-2">
+                              <ComparisonSummary result={item} />
+                            </div>
+                          </div>
                         </div>
                       </div>
                     ))}
