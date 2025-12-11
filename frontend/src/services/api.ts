@@ -3,6 +3,9 @@ import {
   EvaluationResult,
   LLMProvider,
   StreamEvent,
+  ChatRequest,
+  ChatResponse,
+  ChatMessage,
 } from "@/types/api";
 import axios from "axios";
 
@@ -84,6 +87,28 @@ export const llmApi = {
     }
 
     return finalResult;
+  },
+
+  // Chat API
+  sendChatMessage: async (
+    message: string,
+    sessionId?: string | null
+  ): Promise<ChatResponse> => {
+    const request: ChatRequest = {
+      message,
+      session_id: sessionId,
+    };
+    const response = await api.post("/chat", request);
+    return response.data;
+  },
+
+  getChatHistory: async (sessionId: string): Promise<ChatMessage[]> => {
+    const response = await api.get(`/chat/history/${sessionId}`);
+    return response.data;
+  },
+
+  clearChatSession: async (sessionId: string): Promise<void> => {
+    await api.delete(`/chat/session/${sessionId}`);
   },
 };
 

@@ -6,12 +6,16 @@ from ...domain.entities import (
     LLMProvider,
     EvaluationRequest,
     EvaluationResult,
+    ChatRequest,
+    ChatResponse,
+    ChatMessage,
 )
 from ...config import get_settings, Settings
 from ...infrastructure.llm_providers import (
     GroqProvider,
     HuggingFaceProvider,
     OllamaProvider,
+    GeminiProvider
 )
 from ...infrastructure.persistence import (
     PostgresEvaluationRepository,
@@ -20,6 +24,7 @@ from ...infrastructure.persistence import (
 )
 from ...infrastructure.langgraph import EvaluationGraph
 from ...application.use_cases import MetricsCalculator
+from ...application.services import ChatService
 from fastapi.responses import StreamingResponse
 import json
 
@@ -30,6 +35,7 @@ _evaluation_repository = None
 _model_repository = None
 _evaluation_graph = None
 _providers_dict = None
+_chat_service = None
 
 
 # Pydantic models for API
@@ -79,6 +85,8 @@ def get_providers_dict(settings: Settings = Depends(get_settings)):
             "groq": GroqProvider(settings.groq_api_key),
             "huggingface": HuggingFaceProvider(settings.huggingface_api_key),
             "ollama": OllamaProvider(settings.ollama_base_url),
+            "gemini": GeminiProvider(settings.gemini_api_key)
+            # Add more providers as needed
         }
     return _providers_dict
 
@@ -92,6 +100,20 @@ def get_evaluation_graph(
         metrics_calculator = MetricsCalculator()
         _evaluation_graph = EvaluationGraph(providers, metrics_calculator)
     return _evaluation_graph
+
+
+def get_chat_service(settings: Settings = Depends(get_settings)) -> ChatService:
+    global _chat_service, _evaluation_repository
+    if _chat_service is None:
+        # Ensure evaluation repository is initialized
+        if _evaluation_repository is None:
+            session_maker = get_session_maker(settings.database_url)
+            _evaluation_repository = PostgresEvaluationRepository(session_maker)
+        _chat_service = ChatService(
+            evaluation_repository=_evaluation_repository,
+            ollama_base_url=settings.ollama_base_url,
+        )
+    return _chat_service
 
 
 @router.get("/providers", response_model=List[LLMProvider])
@@ -362,3 +384,49 @@ async def seed_models(settings: Settings = Depends(get_settings)):
             })
 
     return {"message": f"Seeded {len(seeded_models)} models", "models": seeded_models}
+
+
+# ==================== Chat Endpoints ====================
+
+@router.post("/chat", response_model=ChatResponse)
+async def chat(
+    request: ChatRequest,
+    settings: Settings = Depends(get_settings),
+):
+    """Send a message to the chatbot and get a response about evaluation history"""
+    if not request.message.strip():
+        raise HTTPException(status_code=400, detail="Message cannot be empty")
+
+    chat_service = get_chat_service(settings)
+    assistant_message, session_id = await chat_service.chat(
+        message=request.message,
+        session_id=request.session_id,
+    )
+
+    return ChatResponse(message=assistant_message, session_id=session_id)
+
+
+@router.get("/chat/history/{session_id}", response_model=List[ChatMessage])
+async def get_chat_history(
+    session_id: str,
+    settings: Settings = Depends(get_settings),
+):
+    """Get chat history for a session"""
+    chat_service = get_chat_service(settings)
+    history = chat_service.get_session_history(session_id)
+    return history
+
+
+@router.delete("/chat/session/{session_id}")
+async def clear_chat_session(
+    session_id: str,
+    settings: Settings = Depends(get_settings),
+):
+    """Clear a chat session"""
+    chat_service = get_chat_service(settings)
+    cleared = chat_service.clear_session(session_id)
+
+    if not cleared:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    return {"message": "Session cleared successfully"}

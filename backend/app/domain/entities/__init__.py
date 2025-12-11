@@ -7,6 +7,11 @@ from .evaluation import (
     EvaluationResult,
     ComparisonSummary,
 )
+from .chat import (
+    ChatMessage,
+    ChatRequest,
+    ChatResponse,
+)
 
 __all__ = [
     "LLMProvider",
@@ -16,4 +21,7 @@ __all__ = [
     "LLMResponse",
     "EvaluationResult",
     "ComparisonSummary",
+    "ChatMessage",
+    "ChatRequest",
+    "ChatResponse",
 ]

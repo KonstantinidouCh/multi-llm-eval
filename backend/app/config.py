@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     # API Keys
     groq_api_key: str = ""
     huggingface_api_key: str = ""
+    gemini_api_key: str = ""
 
     # Ollama
     ollama_base_url: str = "http://localhost:11434"

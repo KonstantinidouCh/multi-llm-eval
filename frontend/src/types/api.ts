@@ -56,3 +56,20 @@ export interface StreamEvent {
   error?: string;
   result?: EvaluationResult;
 }
+
+export interface ChatMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: string;
+}
+
+export interface ChatRequest {
+  message: string;
+  session_id?: string | null;
+}
+
+export interface ChatResponse {
+  message: ChatMessage;
+  session_id: string;
+}

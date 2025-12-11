@@ -21,9 +21,11 @@ import {
   AlertCircle,
   ChevronUp,
   ChevronDown,
+  MessageCircle,
 } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { ComparisonSummary } from "./components/ComparisonSummary";
+import { ChatPanel } from "./components/ChatPanel";
 
 function App() {
   const [providers, setProviders] = useState<LLMProvider[]>([]);
@@ -38,6 +40,9 @@ function App() {
   const [streamingStatus, setStreamingStatus] = useState<string | null>(null);
   const [completedNodes, setCompletedNodes] = useState<string[]>([]);
   const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
+
+  // Chat state
+  const [isChatOpen, setIsChatOpen] = useState(false);
 
   useEffect(() => {
     loadProviders();
@@ -75,6 +80,12 @@ function App() {
           id: "ollama",
           name: "Ollama (Local)",
           models: ["llama3", "mistral", "codellama"],
+          enabled: true,
+        },
+        {
+          id: "gemini",
+          name: "Gemini",
+          models: ["gemini-2.5-flash"],
           enabled: true,
         },
       ]);
@@ -409,6 +420,20 @@ function App() {
           </TabsContent>
         </Tabs>
       </main>
+
+      {/* Chat Button */}
+      {!isChatOpen && (
+        <Button
+          onClick={() => setIsChatOpen(true)}
+          className="fixed bottom-4 right-4 z-50 h-14 w-14 rounded-full bg-gradient-to-br from-violet-500 to-purple-600 hover:from-violet-600 hover:to-purple-700 shadow-lg"
+          size="icon"
+        >
+          <MessageCircle className="h-6 w-6" />
+        </Button>
+      )}
+
+      {/* Chat Panel */}
+      <ChatPanel isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} />
     </div>
   );
 }
