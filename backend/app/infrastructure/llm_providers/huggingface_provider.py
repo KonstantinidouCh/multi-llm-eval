@@ -31,8 +31,6 @@ class HuggingFaceProvider(BaseLLMProvider):
             "deepseek-ai/DeepSeek-R1",                    # Full DeepSeek reasoning model
             "Qwen/Qwen2.5-72B-Instruct",                  # Larger Qwen model
             "Qwen/Qwen2.5-7B-Instruct-1M",               # Long context (1M tokens)
-            "meta-llama/Llama-3.3-70B-Instruct",         # Latest Llama 3.3
-            "mistralai/Mixtral-8x7B-Instruct-v0.1",      # Mixtral MoE
             "microsoft/Phi-3-mini-4k-instruct",          # Small but capable
             "google/gemma-2-9b-it",  
         ]

@@ -37,7 +37,7 @@ function App() {
   // Streaming state
   const [streamingStatus, setStreamingStatus] = useState<string | null>(null);
   const [completedNodes, setCompletedNodes] = useState<string[]>([]);
-  const [isOpen, setIsOpen] = useState(false);
+  const [expandedItems, setExpandedItems] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     loadProviders();
@@ -309,49 +309,65 @@ function App() {
                   </p>
                 ) : (
                   <div className="space-y-4">
-                    {history.map((item, index) => (
-                      <div
-                        key={item.id || index}
-                        className="p-4 border rounded-lg cursor-pointer hover:bg-muted/50"
-                        onClick={() => setIsOpen(!isOpen)}
-                      >
-                        <div className="flex justify-between items-start">
-                          <div>
-                            <p className="font-medium truncate max-w-md">
-                              {item.query}
-                            </p>
-                            <p className="text-sm text-muted-foreground">
-                              {item.responses.length} responses compared
-                            </p>
-                          </div>
-                          <Badge variant="outline">
-                            {new Date(item.timestamp).toLocaleDateString()}
-                          </Badge>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-8 w-8 p-0"
-                          >
-                            {isOpen ? (
-                              <ChevronUp className="h-4 w-4 text-slate-500" />
-                            ) : (
-                              <ChevronDown className="h-4 w-4 text-slate-500" />
-                            )}
-                          </Button>
-                        </div>
+                    {history.map((item, index) => {
+                      const itemId = item.id || `item-${index}`;
+                      const isExpanded = expandedItems.has(itemId);
+                      const toggleExpanded = () => {
+                        setExpandedItems((prev) => {
+                          const newSet = new Set(prev);
+                          if (newSet.has(itemId)) {
+                            newSet.delete(itemId);
+                          } else {
+                            newSet.add(itemId);
+                          }
+                          return newSet;
+                        });
+                      };
+
+                      return (
                         <div
-                          className={`grid transition-[grid-template-rows] duration-300 ease-out ${
-                            isOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
-                          }`}
+                          key={itemId}
+                          className="p-4 border rounded-lg cursor-pointer hover:bg-muted/50"
+                          onClick={toggleExpanded}
                         >
-                          <div className="overflow-hidden">
-                            <div className="p-4 text-slate-600 dark:text-slate-300 leading-relaxed border-t border-violet-100 dark:border-violet-900/50 mt-2">
-                              <ComparisonSummary result={item} />
+                          <div className="flex items-start gap-4">
+                            <div className="flex-1 min-w-0">
+                              <p className="font-medium truncate">
+                                {item.query}
+                              </p>
+                              <p className="text-sm text-muted-foreground">
+                                {item.responses.length} responses compared
+                              </p>
+                            </div>
+                            <Badge variant="outline" className="shrink-0">
+                              {new Date(item.timestamp).toLocaleDateString()}
+                            </Badge>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-8 w-8 p-0 shrink-0"
+                            >
+                              {isExpanded ? (
+                                <ChevronUp className="h-4 w-4 text-slate-500" />
+                              ) : (
+                                <ChevronDown className="h-4 w-4 text-slate-500" />
+                              )}
+                            </Button>
+                          </div>
+                          <div
+                            className={`grid transition-[grid-template-rows] duration-300 ease-out ${
+                              isExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]"
+                            }`}
+                          >
+                            <div className="overflow-hidden">
+                              <div className="p-4 text-slate-600 dark:text-slate-300 leading-relaxed border-t border-violet-100 dark:border-violet-900/50 mt-2">
+                                <ComparisonSummary result={item} />
+                              </div>
                             </div>
                           </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 )}
               </CardContent>
