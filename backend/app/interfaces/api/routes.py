@@ -1,5 +1,6 @@
 from fastapi import APIRouter, HTTPException, Depends
-from typing import List
+from typing import List, Optional
+from pydantic import BaseModel
 
 from ...domain.entities import (
     LLMProvider,
@@ -12,7 +13,11 @@ from ...infrastructure.llm_providers import (
     HuggingFaceProvider,
     OllamaProvider,
 )
-from ...infrastructure.persistence import InMemoryEvaluationRepository
+from ...infrastructure.persistence import (
+    PostgresEvaluationRepository,
+    PostgresModelRepository,
+    get_session_maker,
+)
 from ...infrastructure.langgraph import EvaluationGraph
 from ...application.use_cases import MetricsCalculator
 from fastapi.responses import StreamingResponse
@@ -21,16 +26,50 @@ import json
 router = APIRouter(prefix="/api")
 
 # Dependency injection
-_repository = None
+_evaluation_repository = None
+_model_repository = None
 _evaluation_graph = None
 _providers_dict = None
 
 
-def get_repository() -> InMemoryEvaluationRepository:
-    global _repository
-    if _repository is None:
-        _repository = InMemoryEvaluationRepository()
-    return _repository
+# Pydantic models for API
+class ModelCreate(BaseModel):
+    provider: str
+    model_name: str
+    display_name: Optional[str] = None
+    enabled: bool = True
+
+
+class ModelUpdate(BaseModel):
+    display_name: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+class ModelResponse(BaseModel):
+    id: str
+    provider: str
+    model_name: str
+    display_name: Optional[str]
+    enabled: bool
+
+    class Config:
+        from_attributes = True
+
+
+def get_evaluation_repository(settings: Settings = Depends(get_settings)) -> PostgresEvaluationRepository:
+    global _evaluation_repository
+    if _evaluation_repository is None:
+        session_maker = get_session_maker(settings.database_url)
+        _evaluation_repository = PostgresEvaluationRepository(session_maker)
+    return _evaluation_repository
+
+
+def get_model_repository(settings: Settings = Depends(get_settings)) -> PostgresModelRepository:
+    global _model_repository
+    if _model_repository is None:
+        session_maker = get_session_maker(settings.database_url)
+        _model_repository = PostgresModelRepository(session_maker)
+    return _model_repository
 
 
 def get_providers_dict(settings: Settings = Depends(get_settings)):
@@ -90,7 +129,7 @@ async def evaluate(
         )
 
     graph = get_evaluation_graph(settings)
-    repository = get_repository()
+    repository = get_evaluation_repository(settings)
 
     try:
         result = await graph.run(request)
@@ -101,22 +140,34 @@ async def evaluate(
 
 
 @router.get("/history", response_model=List[EvaluationResult])
-async def get_history(limit: int = 50):
+async def get_history(limit: int = 50, settings: Settings = Depends(get_settings)):
     """Get evaluation history"""
-    repository = get_repository()
+    repository = get_evaluation_repository(settings)
     return await repository.get_all(limit)
 
 
 @router.get("/evaluations/{evaluation_id}", response_model=EvaluationResult)
-async def get_evaluation(evaluation_id: str):
+async def get_evaluation(evaluation_id: str, settings: Settings = Depends(get_settings)):
     """Get a specific evaluation by ID"""
-    repository = get_repository()
+    repository = get_evaluation_repository(settings)
     result = await repository.get_by_id(evaluation_id)
 
     if result is None:
         raise HTTPException(status_code=404, detail="Evaluation not found")
 
     return result
+
+
+@router.delete("/evaluations/{evaluation_id}")
+async def delete_evaluation(evaluation_id: str, settings: Settings = Depends(get_settings)):
+    """Delete a specific evaluation by ID"""
+    repository = get_evaluation_repository(settings)
+    deleted = await repository.delete(evaluation_id)
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Evaluation not found")
+
+    return {"message": "Evaluation deleted successfully"}
 
 
 @router.get("/health")
@@ -137,11 +188,22 @@ async def evaluate_stream(
         raise HTTPException(status_code=400, detail="At least one model must be selected")
 
     graph = get_evaluation_graph(settings)
+    repository = get_evaluation_repository(settings)
 
     async def event_generator():
+        final_result = None
         try:
             async for event in graph.run_streaming(request):
+                # Capture the final result when complete
+                if event.get("type") == "complete" and "result" in event:
+                    final_result = event["result"]
                 yield f"data: {json.dumps(event)}\n\n"
+
+            # Save the result to database after streaming completes
+            if final_result:
+                from ...domain.entities import EvaluationResult
+                result = EvaluationResult(**final_result)
+                await repository.save(result)
         except Exception as e:
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 
@@ -153,3 +215,150 @@ async def evaluate_stream(
             "Connection": "keep-alive",
         }
     )
+
+
+# ==================== Model Management Endpoints ====================
+
+@router.get("/models", response_model=List[ModelResponse])
+async def list_models(
+    provider: Optional[str] = None,
+    enabled_only: bool = False,
+    settings: Settings = Depends(get_settings),
+):
+    """List all saved models, optionally filtered by provider"""
+    repository = get_model_repository(settings)
+
+    if provider:
+        models = await repository.get_by_provider(provider)
+        if enabled_only:
+            models = [m for m in models if m.enabled]
+    else:
+        models = await repository.get_all(enabled_only=enabled_only)
+
+    return [
+        ModelResponse(
+            id=m.id,
+            provider=m.provider,
+            model_name=m.model_name,
+            display_name=m.display_name,
+            enabled=m.enabled,
+        )
+        for m in models
+    ]
+
+
+@router.post("/models", response_model=ModelResponse, status_code=201)
+async def create_model(
+    model: ModelCreate,
+    settings: Settings = Depends(get_settings),
+):
+    """Add a new model to the database"""
+    repository = get_model_repository(settings)
+
+    db_model = await repository.save(
+        provider=model.provider,
+        model_name=model.model_name,
+        display_name=model.display_name,
+        enabled=model.enabled,
+    )
+
+    return ModelResponse(
+        id=db_model.id,
+        provider=db_model.provider,
+        model_name=db_model.model_name,
+        display_name=db_model.display_name,
+        enabled=db_model.enabled,
+    )
+
+
+@router.get("/models/{model_id}", response_model=ModelResponse)
+async def get_model(
+    model_id: str,
+    settings: Settings = Depends(get_settings),
+):
+    """Get a specific model by ID"""
+    repository = get_model_repository(settings)
+    model = await repository.get_by_id(model_id)
+
+    if model is None:
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    return ModelResponse(
+        id=model.id,
+        provider=model.provider,
+        model_name=model.model_name,
+        display_name=model.display_name,
+        enabled=model.enabled,
+    )
+
+
+@router.patch("/models/{model_id}", response_model=ModelResponse)
+async def update_model(
+    model_id: str,
+    update: ModelUpdate,
+    settings: Settings = Depends(get_settings),
+):
+    """Update a model's display name or enabled status"""
+    repository = get_model_repository(settings)
+    model = await repository.get_by_id(model_id)
+
+    if model is None:
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    if update.enabled is not None:
+        model = await repository.set_enabled(model_id, update.enabled)
+
+    if update.display_name is not None:
+        model = await repository.save(
+            provider=model.provider,
+            model_name=model.model_name,
+            display_name=update.display_name,
+            enabled=model.enabled,
+        )
+
+    return ModelResponse(
+        id=model.id,
+        provider=model.provider,
+        model_name=model.model_name,
+        display_name=model.display_name,
+        enabled=model.enabled,
+    )
+
+
+@router.delete("/models/{model_id}")
+async def delete_model(
+    model_id: str,
+    settings: Settings = Depends(get_settings),
+):
+    """Delete a model from the database"""
+    repository = get_model_repository(settings)
+    deleted = await repository.delete(model_id)
+
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Model not found")
+
+    return {"message": "Model deleted successfully"}
+
+
+@router.post("/models/seed")
+async def seed_models(settings: Settings = Depends(get_settings)):
+    """Seed the database with default models from providers"""
+    repository = get_model_repository(settings)
+    providers_dict = get_providers_dict(settings)
+
+    seeded_models = []
+    for provider_id, provider in providers_dict.items():
+        for model_name in provider.available_models:
+            db_model = await repository.save(
+                provider=provider_id,
+                model_name=model_name,
+                display_name=model_name,
+                enabled=True,
+            )
+            seeded_models.append({
+                "id": db_model.id,
+                "provider": db_model.provider,
+                "model_name": db_model.model_name,
+            })
+
+    return {"message": f"Seeded {len(seeded_models)} models", "models": seeded_models}

@@ -14,8 +14,21 @@ class Settings(BaseSettings):
     # Ollama
     ollama_base_url: str = "http://localhost:11434"
 
-    # Database
-    database_url: str = "sqlite+aiosqlite:///./evaluations.db"
+    # Database - PostgreSQL
+    postgres_host: str = "localhost"
+    postgres_port: int = 5432
+    postgres_user: str = "llmeval"
+    postgres_password: str = "llmeval"
+    postgres_db: str = "llmeval"
+
+    @property
+    def database_url(self) -> str:
+        return f"postgresql+asyncpg://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
+
+    @property
+    def database_url_sync(self) -> str:
+        """Sync URL for Alembic migrations"""
+        return f"postgresql://{self.postgres_user}:{self.postgres_password}@{self.postgres_host}:{self.postgres_port}/{self.postgres_db}"
 
     # MCP Server
     mcp_server_port: int = 8001
