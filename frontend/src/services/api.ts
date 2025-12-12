@@ -57,27 +57,55 @@ export const llmApi = {
     if (!reader) throw new Error("No response body");
 
     let finalResult: EvaluationResult | null = null;
+    let buffer = ""; // Buffer for incomplete chunks
 
     try {
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value, { stream: true });
-        const lines = chunk.split("\n");
+        // Append new chunk to buffer
+        buffer += decoder.decode(value, { stream: true });
 
+        // Split by double newline (SSE event separator)
+        const events = buffer.split("\n\n");
+
+        // Keep the last potentially incomplete event in buffer
+        buffer = events.pop() || "";
+
+        for (const event of events) {
+          const lines = event.split("\n");
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                onEvent(data);
+
+                // Capture the final result
+                if (data.type === "complete" && data.result) {
+                  finalResult = data.result;
+                }
+              } catch (e) {
+                console.error("Failed to parse SSE data:", e, line);
+              }
+            }
+          }
+        }
+      }
+
+      // Process any remaining data in buffer
+      if (buffer.trim()) {
+        const lines = buffer.split("\n");
         for (const line of lines) {
           if (line.startsWith("data: ")) {
             try {
               const data = JSON.parse(line.slice(6));
               onEvent(data);
-
-              // Capture the final result
               if (data.type === "complete" && data.result) {
                 finalResult = data.result;
               }
             } catch (e) {
-              console.error("Failed to parse SSE data:", e);
+              console.error("Failed to parse remaining SSE data:", e);
             }
           }
         }

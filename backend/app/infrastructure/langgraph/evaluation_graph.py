@@ -220,7 +220,6 @@ class EvaluationGraph:
     async def _retry_failed(self, state: EvaluationState) -> Dict[str, Any]:
         """Retry failed evaluations"""
         failed_responses = [r for r in state["responses"] if r.error]
-        successful_responses = [r for r in state["responses"] if not r.error]
 
         failed_provider_models = {(r.provider, r.model) for r in failed_responses}
         failed_selections = [
@@ -240,8 +239,9 @@ class EvaluationGraph:
             if isinstance(resp, LLMResponse):
                 new_responses.append(resp)
 
+        # Only return new responses - the add operator will append them
         return {
-            "responses": successful_responses + new_responses,
+            "responses": new_responses,
             "retry_count": state.get("retry_count", 0) + 1,
             "messages": [HumanMessage(content=f"Retried {len(failed_selections)} failed evaluations")]
         }
@@ -312,7 +312,7 @@ class EvaluationGraph:
         judge_model = None
 
         # Priority: huggingface > groq > ollama
-        for provider_id in ["huggingface", "groq", "ollama"]:
+        for provider_id in ["huggingface", "groq", "ollama", "gemini"]:
             if provider_id in self.providers:
                 provider = self.providers[provider_id]
                 if await provider.is_available():
@@ -525,7 +525,8 @@ REASONING: [brief explanation]"""
                 if isinstance(node_output, dict):
                     for key, value in node_output.items():
                         if key == "responses" and isinstance(value, list):
-                            final_state[key] = value
+                            # Accumulate responses (matches the Annotated add operator)
+                            final_state[key] = final_state.get(key, []) + value
                         elif key == "comparison_summary":
                             final_state[key] = value
                         elif key == "judge_results":
@@ -533,11 +534,19 @@ REASONING: [brief explanation]"""
                         elif key not in ["messages"]:
                             final_state[key] = value
 
+        # Deduplicate responses - keep the latest response for each provider/model pair
+        responses = final_state.get("responses", [])
+        seen = {}
+        for resp in responses:
+            key = (resp.provider, resp.model) if hasattr(resp, 'provider') else (resp.get('provider'), resp.get('model'))
+            seen[key] = resp  # Later responses override earlier ones
+        unique_responses = list(seen.values())
+
         yield {
             "type": "complete",
             "result": EvaluationResult(
                 query=request.query,
-                responses=final_state.get("responses", []),
+                responses=unique_responses,
                 comparison_summary=final_state.get("comparison_summary") or ComparisonSummary(),
             ).model_dump(mode='json'),
             "session_id": thread_id,

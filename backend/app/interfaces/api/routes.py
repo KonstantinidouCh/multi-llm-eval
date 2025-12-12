@@ -223,10 +223,16 @@ async def evaluate_stream(
 
             # Save the result to database after streaming completes
             if final_result:
-                from ...domain.entities import EvaluationResult
-                result = EvaluationResult(**final_result)
-                await repository.save(result)
+                try:
+                    from ...domain.entities import EvaluationResult
+                    result = EvaluationResult(**final_result)
+                    await repository.save(result)
+                except Exception as save_error:
+                    print(f"Error saving result: {save_error}")
         except Exception as e:
+            import traceback
+            print(f"Streaming error: {e}")
+            traceback.print_exc()
             yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
 
     return StreamingResponse(
@@ -235,6 +241,7 @@ async def evaluate_stream(
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
         }
     )
 

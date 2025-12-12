@@ -30,8 +30,6 @@ class HuggingFaceProvider(BaseLLMProvider):
              # Additional recommended models
             "deepseek-ai/DeepSeek-R1",                    # Full DeepSeek reasoning model
             "Qwen/Qwen2.5-72B-Instruct",                  # Larger Qwen model
-            "Qwen/Qwen2.5-7B-Instruct-1M",               # Long context (1M tokens)
-            "microsoft/Phi-3-mini-4k-instruct",          # Small but capable
             "google/gemma-2-9b-it",  
         ]
 

@@ -20,9 +20,8 @@ class GeminiProvider(BaseLLMProvider):
     @property
     def available_models(self) -> list[str]:
         return [
-            "gemini-2.0-flash",
-            "gemini-1.5-flash",
-            "gemini-1.5-pro",
+            "gemini-2.5-flash",
+            "gemini-2.5-flash-lite",
         ]
 
     async def is_available(self) -> bool:
