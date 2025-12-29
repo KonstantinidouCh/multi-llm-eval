@@ -34,6 +34,15 @@ class Settings(BaseSettings):
     # MCP Server
     mcp_server_port: int = 8001
 
+    # Langfuse Observability
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "https://cloud.langfuse.com"
+
+    @property
+    def langfuse_enabled(self) -> bool:
+        return bool(self.langfuse_public_key and self.langfuse_secret_key)
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

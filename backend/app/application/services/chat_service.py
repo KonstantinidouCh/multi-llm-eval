@@ -2,10 +2,11 @@ import httpx
 from datetime import datetime
 from typing import Any
 import uuid
-import json
+import time
 
 from ...domain.entities import ChatMessage, EvaluationResult
 from ...infrastructure.persistence import PostgresEvaluationRepository
+from ...infrastructure.observability import create_trace, observe_llm_call, flush_langfuse
 
 
 class ChatService:
@@ -100,6 +101,7 @@ Available metrics to discuss:
         self,
         message: str,
         session_id: str | None = None,
+        user_id: str | None = None,
     ) -> tuple[ChatMessage, str]:
         """Process a chat message and return a response."""
         # Get or create session
@@ -124,8 +126,23 @@ Available metrics to discuss:
         for msg in session_history[-10:]:
             messages.append({"role": msg.role, "content": msg.content})
 
-        # Call LLM
-        response_content = await self._call_llm(messages)
+        # Create Langfuse trace for chat
+        trace = create_trace(
+            name="chat",
+            user_id=user_id,
+            session_id=session_id,
+            metadata={
+                "message_preview": message[:100],
+                "evaluation_context_count": len(evaluations),
+            },
+            tags=["chat", "evaluation-assistant"],
+        )
+
+        # Call LLM with trace
+        response_content = await self._call_llm(messages, trace=trace)
+
+        # Flush Langfuse events
+        flush_langfuse()
 
         # Create and store assistant message
         assistant_message = ChatMessage(role="assistant", content=response_content)
@@ -133,8 +150,15 @@ Available metrics to discuss:
 
         return assistant_message, session_id
 
-    async def _call_llm(self, messages: list[dict[str, str]]) -> str:
-        """Call the Ollama API to generate a response."""
+    async def _call_llm(
+        self,
+        messages: list[dict[str, str]],
+        trace: Any = None,
+    ) -> str:
+        """Call the Ollama API to generate a response with optional Langfuse tracing."""
+        start_time = time.perf_counter()
+        prompt = messages[-1]["content"] if messages else ""
+
         try:
             async with httpx.AsyncClient() as client:
                 response = await client.post(
@@ -149,14 +173,86 @@ Available metrics to discuss:
                 )
                 response.raise_for_status()
                 data = response.json()
-                return data["message"]["content"]
+                response_content = data["message"]["content"]
+
+                # Record in Langfuse if trace is provided
+                if trace:
+                    end_time = time.perf_counter()
+                    latency_ms = (end_time - start_time) * 1000
+                    observe_llm_call(
+                        trace=trace,
+                        name="chat-response",
+                        provider="ollama",
+                        model=self.model,
+                        prompt=prompt,
+                        response=response_content,
+                        input_tokens=0,  # Ollama doesn't return token counts in this API
+                        output_tokens=0,
+                        latency_ms=latency_ms,
+                    )
+
+                return response_content
         except httpx.HTTPStatusError as e:
             error_detail = e.response.text[:200] if e.response.text else str(e.response.status_code)
-            return f"I encountered an error while processing your request: {error_detail}"
+            error_msg = f"I encountered an error while processing your request: {error_detail}"
+
+            if trace:
+                end_time = time.perf_counter()
+                latency_ms = (end_time - start_time) * 1000
+                observe_llm_call(
+                    trace=trace,
+                    name="chat-response",
+                    provider="ollama",
+                    model=self.model,
+                    prompt=prompt,
+                    response="",
+                    input_tokens=0,
+                    output_tokens=0,
+                    latency_ms=latency_ms,
+                    error=error_msg,
+                )
+
+            return error_msg
         except httpx.ConnectError:
-            return "I couldn't connect to the Ollama server. Please make sure Ollama is running."
+            error_msg = "I couldn't connect to the Ollama server. Please make sure Ollama is running."
+
+            if trace:
+                end_time = time.perf_counter()
+                latency_ms = (end_time - start_time) * 1000
+                observe_llm_call(
+                    trace=trace,
+                    name="chat-response",
+                    provider="ollama",
+                    model=self.model,
+                    prompt=prompt,
+                    response="",
+                    input_tokens=0,
+                    output_tokens=0,
+                    latency_ms=latency_ms,
+                    error=error_msg,
+                )
+
+            return error_msg
         except Exception as e:
-            return f"I encountered an error: {str(e)}"
+            error_msg = f"I encountered an error: {str(e)}"
+
+            if trace:
+                end_time = time.perf_counter()
+                latency_ms = (end_time - start_time) * 1000
+                observe_llm_call(
+                    trace=trace,
+                    name="chat-response",
+                    provider="ollama",
+                    model=self.model,
+                    prompt=prompt,
+                    response="",
+                    input_tokens=0,
+                    output_tokens=0,
+                    latency_ms=latency_ms,
+                    error=error_msg,
+                )
+
+            return error_msg
 
     def get_session_history(self, session_id: str) -> list[ChatMessage]:
         """Get chat history for a session."""

@@ -1,6 +1,8 @@
 from abc import ABC, abstractmethod
 import time
+from typing import Optional, Any
 from ...domain.entities import LLMResponse, MetricResult
+from ..observability import observe_llm_call
 
 
 class BaseLLMProvider(ABC):
@@ -36,8 +38,13 @@ class BaseLLMProvider(ABC):
         """Return (input_cost_per_token, output_cost_per_token)"""
         return (0.0, 0.0)  # Free tier default
 
-    async def generate(self, prompt: str, model: str) -> LLMResponse:
-        """Generate a response from the LLM with metrics"""
+    async def generate(
+        self,
+        prompt: str,
+        model: str,
+        trace: Optional[Any] = None,
+    ) -> LLMResponse:
+        """Generate a response from the LLM with metrics and optional Langfuse tracing."""
         start_time = time.perf_counter()
 
         try:
@@ -64,6 +71,24 @@ class BaseLLMProvider(ABC):
                 estimated_cost=estimated_cost,
             )
 
+            # Record in Langfuse if trace is provided
+            if trace:
+                observe_llm_call(
+                    trace=trace,
+                    name=f"{self.provider_id}/{model}",
+                    provider=self.provider_id,
+                    model=model,
+                    prompt=prompt,
+                    response=response_text,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    latency_ms=latency_ms,
+                    metadata={
+                        "tokens_per_second": tokens_per_second,
+                        "estimated_cost": estimated_cost,
+                    },
+                )
+
             return LLMResponse(
                 provider=self.provider_id,
                 model=model,
@@ -72,6 +97,24 @@ class BaseLLMProvider(ABC):
             )
 
         except Exception as e:
+            end_time = time.perf_counter()
+            latency_ms = (end_time - start_time) * 1000
+
+            # Record error in Langfuse if trace is provided
+            if trace:
+                observe_llm_call(
+                    trace=trace,
+                    name=f"{self.provider_id}/{model}",
+                    provider=self.provider_id,
+                    model=model,
+                    prompt=prompt,
+                    response="",
+                    input_tokens=0,
+                    output_tokens=0,
+                    latency_ms=latency_ms,
+                    error=str(e),
+                )
+
             return LLMResponse(
                 provider=self.provider_id,
                 model=model,

@@ -15,6 +15,7 @@ from ...domain.entities import (
 )
 from ...domain.repositories import LLMProviderInterface
 from ...application.use_cases import MetricsCalculator
+from ..observability import create_trace, flush_langfuse
 
 
 class JudgeResult(TypedDict):
@@ -64,6 +65,8 @@ class EvaluationGraph:
         self.checkpoint_db = checkpoint_db
         self.graph = None
         self.checkpointer = None
+        # Store traces by thread_id to avoid serialization issues
+        self._traces: Dict[str, Any] = {}
 
     async def _get_graph(self):
         """Get or create the compiled graph with checkpointing (persistence)"""
@@ -187,10 +190,14 @@ class EvaluationGraph:
         if context_messages:
             context_prefix = "Context from previous conversation:\n" + "\n".join(context_messages[-3:]) + "\n\nCurrent question: "
 
+        # Get the Langfuse trace if available (stored by session_id)
+        session_id = state.get("session_id")
+        trace = self._traces.get(session_id) if session_id else None
+
         async def evaluate_selection(selection: dict) -> LLMResponse:
             provider = self.providers[selection["provider"]]
             query_with_context = context_prefix + state["query"] if context_prefix else state["query"]
-            return await provider.generate(query_with_context, selection["model"])
+            return await provider.generate(query_with_context, selection["model"], trace=trace)
 
         tasks = [
             evaluate_selection(sel)
@@ -227,9 +234,13 @@ class EvaluationGraph:
             if (sel["provider"], sel["model"]) in failed_provider_models
         ]
 
+        # Get the Langfuse trace if available (stored by session_id)
+        session_id = state.get("session_id")
+        trace = self._traces.get(session_id) if session_id else None
+
         async def evaluate_selection(selection: dict) -> LLMResponse:
             provider = self.providers[selection["provider"]]
-            return await provider.generate(state["query"], selection["model"])
+            return await provider.generate(state["query"], selection["model"], trace=trace)
 
         tasks = [evaluate_selection(sel) for sel in failed_selections]
         retry_responses = await asyncio.gather(*tasks, return_exceptions=True)
@@ -353,7 +364,10 @@ HELPFULNESS: [score]
 REASONING: [brief explanation]"""
 
             try:
-                judge_response = await judge_provider.generate(judge_prompt, judge_model)
+                # Get the Langfuse trace if available for judge calls (stored by session_id)
+                session_id = state.get("session_id")
+                trace = self._traces.get(session_id) if session_id else None
+                judge_response = await judge_provider.generate(judge_prompt, judge_model, trace=trace)
 
                 # Parse judge response
                 accuracy = 0.5
@@ -466,7 +480,8 @@ REASONING: [brief explanation]"""
     async def run_streaming(
         self,
         request: EvaluationRequest,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> AsyncGenerator[dict, None]:
         """Execute the evaluation workflow with streaming updates"""
         graph = await self._get_graph()
@@ -474,6 +489,23 @@ REASONING: [brief explanation]"""
         # Generate or use provided session ID for persistence
         thread_id = session_id or str(uuid.uuid4())
         config = {"configurable": {"thread_id": thread_id}}
+
+        # Create Langfuse trace for this evaluation and store it by thread_id
+        model_names = [f"{sel.provider}/{sel.model}" for sel in request.selections]
+        langfuse_trace = create_trace(
+            name="llm-evaluation",
+            user_id=user_id,
+            session_id=thread_id,
+            metadata={
+                "query": request.query[:200],
+                "models": model_names,
+                "model_count": len(request.selections),
+            },
+            tags=["evaluation", "multi-llm"],
+        )
+        # Store trace outside of state to avoid serialization issues
+        if langfuse_trace:
+            self._traces[thread_id] = langfuse_trace
 
         initial_state: EvaluationState = {
             "query": request.query,
@@ -492,77 +524,103 @@ REASONING: [brief explanation]"""
 
         final_state = initial_state.copy()
 
-        async for chunk in graph.astream(initial_state, config=config, stream_mode="updates"):
-            for node_name, node_output in chunk.items():
-                serializable_output = {}
-                if isinstance(node_output, dict):
-                    for key, value in node_output.items():
-                        if key == "messages":
-                            serializable_output[key] = [
-                                str(m.content) if hasattr(m, 'content') else str(m)
-                                for m in value
-                            ]
-                        elif key == "responses":
-                            serializable_output[key] = [
-                                r.model_dump(mode='json') if hasattr(r, 'model_dump') else r
-                                for r in value
-                            ]
-                        elif key == "comparison_summary" and value is not None:
-                            serializable_output[key] = (
-                                value.model_dump(mode='json') if hasattr(value, 'model_dump') else value
-                            )
-                        elif key == "judge_results":
-                            serializable_output[key] = value
-                        else:
-                            serializable_output[key] = value
+        try:
+            async for chunk in graph.astream(initial_state, config=config, stream_mode="updates"):
+                for node_name, node_output in chunk.items():
+                    serializable_output = {}
+                    if isinstance(node_output, dict):
+                        for key, value in node_output.items():
+                            if key == "messages":
+                                serializable_output[key] = [
+                                    str(m.content) if hasattr(m, 'content') else str(m)
+                                    for m in value
+                                ]
+                            elif key == "responses":
+                                serializable_output[key] = [
+                                    r.model_dump(mode='json') if hasattr(r, 'model_dump') else r
+                                    for r in value
+                                ]
+                            elif key == "comparison_summary" and value is not None:
+                                serializable_output[key] = (
+                                    value.model_dump(mode='json') if hasattr(value, 'model_dump') else value
+                                )
+                            elif key == "judge_results":
+                                serializable_output[key] = value
+                            else:
+                                serializable_output[key] = value
 
-                yield {
-                    "type": "node_complete",
-                    "node": node_name,
-                    "data": serializable_output
-                }
+                    yield {
+                        "type": "node_complete",
+                        "node": node_name,
+                        "data": serializable_output
+                    }
 
-                if isinstance(node_output, dict):
-                    for key, value in node_output.items():
-                        if key == "responses" and isinstance(value, list):
-                            # Accumulate responses (matches the Annotated add operator)
-                            final_state[key] = final_state.get(key, []) + value
-                        elif key == "comparison_summary":
-                            final_state[key] = value
-                        elif key == "judge_results":
-                            final_state[key] = value
-                        elif key not in ["messages"]:
-                            final_state[key] = value
+                    if isinstance(node_output, dict):
+                        for key, value in node_output.items():
+                            if key == "responses" and isinstance(value, list):
+                                # Accumulate responses (matches the Annotated add operator)
+                                final_state[key] = final_state.get(key, []) + value
+                            elif key == "comparison_summary":
+                                final_state[key] = value
+                            elif key == "judge_results":
+                                final_state[key] = value
+                            elif key not in ["messages"]:
+                                final_state[key] = value
 
-        # Deduplicate responses - keep the latest response for each provider/model pair
-        responses = final_state.get("responses", [])
-        seen = {}
-        for resp in responses:
-            key = (resp.provider, resp.model) if hasattr(resp, 'provider') else (resp.get('provider'), resp.get('model'))
-            seen[key] = resp  # Later responses override earlier ones
-        unique_responses = list(seen.values())
+            # Deduplicate responses - keep the latest response for each provider/model pair
+            responses = final_state.get("responses", [])
+            seen = {}
+            for resp in responses:
+                key = (resp.provider, resp.model) if hasattr(resp, 'provider') else (resp.get('provider'), resp.get('model'))
+                seen[key] = resp  # Later responses override earlier ones
+            unique_responses = list(seen.values())
 
-        yield {
-            "type": "complete",
-            "result": EvaluationResult(
-                query=request.query,
-                responses=unique_responses,
-                comparison_summary=final_state.get("comparison_summary") or ComparisonSummary(),
-            ).model_dump(mode='json'),
-            "session_id": thread_id,
-            "judge_results": final_state.get("judge_results", [])
-        }
+            yield {
+                "type": "complete",
+                "result": EvaluationResult(
+                    query=request.query,
+                    responses=unique_responses,
+                    comparison_summary=final_state.get("comparison_summary") or ComparisonSummary(),
+                ).model_dump(mode='json'),
+                "session_id": thread_id,
+                "judge_results": final_state.get("judge_results", [])
+            }
+        finally:
+            # Clean up trace and flush Langfuse events
+            if thread_id in self._traces:
+                trace = self._traces.pop(thread_id)
+                if trace and hasattr(trace, 'end'):
+                    trace.end()
+            flush_langfuse()
 
     async def run(
         self,
         request: EvaluationRequest,
-        session_id: Optional[str] = None
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> EvaluationResult:
         """Execute the evaluation workflow"""
         graph = await self._get_graph()
 
         thread_id = session_id or str(uuid.uuid4())
         config = {"configurable": {"thread_id": thread_id}}
+
+        # Create Langfuse trace for this evaluation and store it by thread_id
+        model_names = [f"{sel.provider}/{sel.model}" for sel in request.selections]
+        langfuse_trace = create_trace(
+            name="llm-evaluation",
+            user_id=user_id,
+            session_id=thread_id,
+            metadata={
+                "query": request.query[:200],
+                "models": model_names,
+                "model_count": len(request.selections),
+            },
+            tags=["evaluation", "multi-llm"],
+        )
+        # Store trace outside of state to avoid serialization issues
+        if langfuse_trace:
+            self._traces[thread_id] = langfuse_trace
 
         initial_state: EvaluationState = {
             "query": request.query,
@@ -579,13 +637,21 @@ REASONING: [brief explanation]"""
             "session_id": thread_id,
         }
 
-        final_state = await graph.ainvoke(initial_state, config=config)
+        try:
+            final_state = await graph.ainvoke(initial_state, config=config)
 
-        return EvaluationResult(
-            query=request.query,
-            responses=final_state["responses"],
-            comparison_summary=final_state["comparison_summary"] or ComparisonSummary(),
-        )
+            return EvaluationResult(
+                query=request.query,
+                responses=final_state["responses"],
+                comparison_summary=final_state["comparison_summary"] or ComparisonSummary(),
+            )
+        finally:
+            # Clean up trace and flush Langfuse events
+            if thread_id in self._traces:
+                trace = self._traces.pop(thread_id)
+                if trace and hasattr(trace, 'end'):
+                    trace.end()
+            flush_langfuse()
 
     async def get_conversation_history(self, session_id: str) -> list[dict]:
         """Retrieve conversation history for a session (memory)"""
