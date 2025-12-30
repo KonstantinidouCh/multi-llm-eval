@@ -15,7 +15,7 @@ from ...domain.entities import (
 )
 from ...domain.repositories import LLMProviderInterface
 from ...application.use_cases import MetricsCalculator
-from ..observability import create_trace, flush_langfuse
+from ..observability import create_trace, flush_langfuse, run_evals_on_response
 
 
 class JudgeResult(TypedDict):
@@ -284,9 +284,13 @@ class EvaluationGraph:
         }
 
     async def _calculate_metrics(self, state: EvaluationState) -> Dict[str, Any]:
-        """Calculate quality metrics for all responses"""
+        """Calculate quality metrics for all responses and record scores in Langfuse"""
         if state.get("error"):
             return {}
+
+        # Get the Langfuse trace for scoring
+        session_id = state.get("session_id")
+        trace = self._traces.get(session_id) if session_id else None
 
         for response in state["responses"]:
             if not response.error:
@@ -301,6 +305,26 @@ class EvaluationGraph:
                     state["query"],
                     response.metrics.coherence_score,
                     response.metrics.relevance_score,
+                )
+
+                # Record scores in Langfuse
+                model_id = f"{response.provider}/{response.model}"
+                if trace and hasattr(trace, 'add_model_scores'):
+                    trace.add_model_scores(
+                        model_id=model_id,
+                        quality_score=response.metrics.quality_score,
+                        coherence_score=response.metrics.coherence_score,
+                        relevance_score=response.metrics.relevance_score,
+                        latency_ms=response.metrics.latency_ms,
+                        cost=response.metrics.estimated_cost,
+                    )
+
+                # Run Langfuse evals and record results
+                run_evals_on_response(
+                    query=state["query"],
+                    response=response.response,
+                    model_id=model_id,
+                    trace=trace,
                 )
 
         return {
@@ -390,20 +414,40 @@ REASONING: [brief explanation]"""
                         elif line.startswith("REASONING:"):
                             reasoning = line.split(":", 1)[1].strip() if ":" in line else line
 
-                judge_results.append({
+                judge_result = {
                     "model_id": f"{response.provider}/{response.model}",
                     "accuracy_score": min(max(accuracy, 0), 1),
                     "helpfulness_score": min(max(helpfulness, 0), 1),
                     "reasoning": reasoning
-                })
+                }
+                judge_results.append(judge_result)
+
+                # Record judge scores in Langfuse
+                if trace and hasattr(trace, 'add_judge_scores'):
+                    trace.add_judge_scores(
+                        model_id=judge_result["model_id"],
+                        accuracy_score=judge_result["accuracy_score"],
+                        helpfulness_score=judge_result["helpfulness_score"],
+                        reasoning=judge_result["reasoning"],
+                    )
             except Exception as e:
                 # Fallback on error
-                judge_results.append({
+                judge_result = {
                     "model_id": f"{response.provider}/{response.model}",
                     "accuracy_score": response.metrics.relevance_score,
                     "helpfulness_score": response.metrics.coherence_score,
                     "reasoning": f"Judge error: {str(e)}"
-                })
+                }
+                judge_results.append(judge_result)
+
+                # Still record fallback scores
+                if trace and hasattr(trace, 'add_judge_scores'):
+                    trace.add_judge_scores(
+                        model_id=judge_result["model_id"],
+                        accuracy_score=judge_result["accuracy_score"],
+                        helpfulness_score=judge_result["helpfulness_score"],
+                        reasoning=judge_result["reasoning"],
+                    )
 
         return {
             "judge_results": judge_results,
@@ -463,6 +507,18 @@ REASONING: [brief explanation]"""
             most_cost_effective=f"{cost_effective.provider}/{cost_effective.model}",
             best_overall=f"{best_overall.provider}/{best_overall.model}",
         )
+
+        # Record comparison scores in Langfuse
+        session_id = state.get("session_id")
+        trace = self._traces.get(session_id) if session_id else None
+        if trace and hasattr(trace, 'add_comparison_scores'):
+            trace.add_comparison_scores(
+                best_overall=summary.best_overall,
+                fastest=summary.fastest,
+                highest_quality=summary.highest_quality,
+                most_cost_effective=summary.most_cost_effective,
+                total_models=len(valid),
+            )
 
         # Add to conversation history (memory)
         history_entry = {
