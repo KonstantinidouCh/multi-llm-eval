@@ -538,6 +538,7 @@ REASONING: [brief explanation]"""
         request: EvaluationRequest,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        user_metadata: Optional[dict] = None,
     ) -> AsyncGenerator[dict, None]:
         """Execute the evaluation workflow with streaming updates"""
         graph = await self._get_graph()
@@ -548,15 +549,20 @@ REASONING: [brief explanation]"""
 
         # Create Langfuse trace for this evaluation and store it by thread_id
         model_names = [f"{sel.provider}/{sel.model}" for sel in request.selections]
+        trace_metadata = {
+            "query": request.query[:200],
+            "models": model_names,
+            "model_count": len(request.selections),
+        }
+        # Add user metadata if provided
+        if user_metadata:
+            trace_metadata["user"] = user_metadata
+
         langfuse_trace = create_trace(
             name="llm-evaluation",
             user_id=user_id,
             session_id=thread_id,
-            metadata={
-                "query": request.query[:200],
-                "models": model_names,
-                "model_count": len(request.selections),
-            },
+            metadata=trace_metadata,
             tags=["evaluation", "multi-llm"],
         )
         # Store trace outside of state to avoid serialization issues
@@ -654,6 +660,7 @@ REASONING: [brief explanation]"""
         request: EvaluationRequest,
         session_id: Optional[str] = None,
         user_id: Optional[str] = None,
+        user_metadata: Optional[dict] = None,
     ) -> EvaluationResult:
         """Execute the evaluation workflow"""
         graph = await self._get_graph()
@@ -663,15 +670,20 @@ REASONING: [brief explanation]"""
 
         # Create Langfuse trace for this evaluation and store it by thread_id
         model_names = [f"{sel.provider}/{sel.model}" for sel in request.selections]
+        trace_metadata = {
+            "query": request.query[:200],
+            "models": model_names,
+            "model_count": len(request.selections),
+        }
+        # Add user metadata if provided
+        if user_metadata:
+            trace_metadata["user"] = user_metadata
+
         langfuse_trace = create_trace(
             name="llm-evaluation",
             user_id=user_id,
             session_id=thread_id,
-            metadata={
-                "query": request.query[:200],
-                "models": model_names,
-                "model_count": len(request.selections),
-            },
+            metadata=trace_metadata,
             tags=["evaluation", "multi-llm"],
         )
         # Store trace outside of state to avoid serialization issues

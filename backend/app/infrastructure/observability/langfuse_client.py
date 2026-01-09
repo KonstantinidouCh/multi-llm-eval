@@ -84,11 +84,16 @@ class LangfuseTrace:
             # Enter the context
             self._span = self._context_manager.__enter__()
 
-            # Propagate user_id if provided (for Langfuse user tracking)
-            if self.user_id:
+            # Propagate user_id and session_id for Langfuse tracking
+            if self.user_id or self.session_id:
                 try:
                     from langfuse import propagate_attributes
-                    self._propagate_context = propagate_attributes(user_id=self.user_id)
+                    attrs = {}
+                    if self.user_id:
+                        attrs["user_id"] = self.user_id
+                    if self.session_id:
+                        attrs["session_id"] = self.session_id
+                    self._propagate_context = propagate_attributes(**attrs)
                     self._propagate_context.__enter__()
                 except Exception:
                     pass
@@ -104,8 +109,32 @@ class LangfuseTrace:
 
         return self
 
-    def end(self):
+    def update(self, input: Optional[Any] = None, output: Optional[Any] = None, metadata: Optional[dict] = None):
+        """Update the current span with input, output, or metadata."""
+        if not self._span:
+            return
+
+        try:
+            update_kwargs = {}
+            if input is not None:
+                update_kwargs["input"] = input
+            if output is not None:
+                update_kwargs["output"] = output
+            if metadata is not None:
+                # Merge with existing metadata
+                update_kwargs["metadata"] = {**self.metadata, **metadata}
+
+            if update_kwargs and hasattr(self._span, 'update'):
+                self._span.update(**update_kwargs)
+        except Exception:
+            pass
+
+    def end(self, output: Optional[Any] = None):
         """End the trace observation by exiting the context manager."""
+        # Update output if provided
+        if output is not None:
+            self.update(output=output)
+
         # Submit any pending scores before ending
         self._submit_scores()
 

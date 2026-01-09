@@ -156,11 +156,18 @@ async def evaluate(
     graph = get_evaluation_graph(settings)
     repository = get_evaluation_repository(settings)
 
-    # Get user_id for Langfuse tracking
+    # Get user_id and metadata for Langfuse tracking
     user_id = current_user.id if current_user else None
+    user_metadata = None
+    if current_user:
+        user_metadata = {
+            "username": current_user.username,
+            "email": current_user.email,
+            "is_admin": current_user.is_admin,
+        }
 
     try:
-        result = await graph.run(request, user_id=user_id)
+        result = await graph.run(request, user_id=user_id, user_metadata=user_metadata)
         await repository.save(result, user_id=user_id)
         return result
     except Exception as e:
@@ -224,13 +231,20 @@ async def evaluate_stream(
     graph = get_evaluation_graph(settings)
     repository = get_evaluation_repository(settings)
 
-    # Get user_id for Langfuse tracking
+    # Get user_id and metadata for Langfuse tracking
     user_id = current_user.id if current_user else None
+    user_metadata = None
+    if current_user:
+        user_metadata = {
+            "username": current_user.username,
+            "email": current_user.email,
+            "is_admin": current_user.is_admin,
+        }
 
     async def event_generator():
         final_result = None
         try:
-            async for event in graph.run_streaming(request, user_id=user_id):
+            async for event in graph.run_streaming(request, user_id=user_id, user_metadata=user_metadata):
                 # Capture the final result when complete
                 if event.get("type") == "complete" and "result" in event:
                     final_result = event["result"]
@@ -422,11 +436,19 @@ async def chat(
 
     chat_service = get_chat_service(settings)
     user_id = current_user.id if current_user else None
+    user_metadata = None
+    if current_user:
+        user_metadata = {
+            "username": current_user.username,
+            "email": current_user.email,
+            "is_admin": current_user.is_admin,
+        }
 
     assistant_message, session_id = await chat_service.chat(
         message=request.message,
         session_id=request.session_id,
         user_id=user_id,
+        user_metadata=user_metadata,
     )
 
     return ChatResponse(message=assistant_message, session_id=session_id)

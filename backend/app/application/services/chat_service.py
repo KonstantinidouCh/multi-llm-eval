@@ -37,14 +37,20 @@ class ChatService:
         lines = [
             f"Query: \"{eval_result.query}\"",
             f"Date: {timestamp_str}",
-            "Results:"
+            "Model Responses:"
         ]
 
         for resp in eval_result.responses:
             metrics = resp.metrics
+            # Include the actual response content (truncated if too long)
+            response_preview = resp.response[:500] if resp.response else "(No response)"
+            if len(resp.response) > 500:
+                response_preview += "..."
+
+            lines.append(f"\n  [{resp.provider}/{resp.model}]")
+            lines.append(f"    Response: {response_preview}")
             lines.append(
-                f"  - {resp.provider}/{resp.model}: "
-                f"latency={metrics.latency_ms:.0f}ms, "
+                f"    Metrics: latency={metrics.latency_ms:.0f}ms, "
                 f"quality={metrics.quality_score:.2f}, "
                 f"coherence={metrics.coherence_score:.2f}, "
                 f"relevance={metrics.relevance_score:.2f}, "
@@ -52,11 +58,11 @@ class ChatService:
                 f"tokens/s={metrics.tokens_per_second:.1f}"
             )
             if resp.error:
-                lines.append(f"    (Error: {resp.error})")
+                lines.append(f"    Error: {resp.error}")
 
         summary = eval_result.comparison_summary
         lines.extend([
-            f"Summary: fastest={summary.fastest}, "
+            f"\nSummary: fastest={summary.fastest}, "
             f"highest_quality={summary.highest_quality}, "
             f"most_cost_effective={summary.most_cost_effective}, "
             f"best_overall={summary.best_overall}"
@@ -75,18 +81,20 @@ class ChatService:
             context = "\n\n".join(context_parts)
 
         return f"""You are a helpful assistant that answers questions about LLM evaluation history.
-You have access to the user's evaluation history data shown below.
+You have access to the user's evaluation history data shown below, including the actual responses from each model.
 
 EVALUATION HISTORY:
 {context}
 
 INSTRUCTIONS:
-- Answer questions about the evaluations, comparing models, performance metrics, costs, etc.
-- Be specific and reference actual data from the evaluations.
+- Answer questions about the evaluations, comparing models, performance metrics, costs, and RESPONSE CONTENT.
+- You have access to what each model actually said - use this to answer questions about the content of responses.
+- Be specific and reference actual data and quotes from the evaluations.
+- If the user asks what a model said or how it responded, quote or summarize the response content.
+- When comparing models, mention specific metrics like latency, quality scores, and costs.
+- You can analyze the quality, accuracy, or helpfulness of model responses based on what they said.
 - If asked about something not in the history, say so politely.
 - Keep responses concise but informative.
-- When comparing models, mention specific metrics like latency, quality scores, and costs.
-- You can suggest which models might be best for different use cases based on the data.
 - If there's no evaluation history yet, let the user know they need to run some evaluations first.
 
 Available metrics to discuss:
@@ -102,6 +110,7 @@ Available metrics to discuss:
         message: str,
         session_id: str | None = None,
         user_id: str | None = None,
+        user_metadata: dict | None = None,
     ) -> tuple[ChatMessage, str]:
         """Process a chat message and return a response."""
         # Get or create session
@@ -127,19 +136,30 @@ Available metrics to discuss:
             messages.append({"role": msg.role, "content": msg.content})
 
         # Create Langfuse trace for chat
+        trace_metadata = {
+            "evaluation_context_count": len(evaluations),
+        }
+        if user_metadata:
+            trace_metadata["user"] = user_metadata
+
         trace = create_trace(
             name="chat",
             user_id=user_id,
             session_id=session_id,
-            metadata={
-                "message_preview": message[:100],
-                "evaluation_context_count": len(evaluations),
-            },
+            metadata=trace_metadata,
             tags=["chat", "evaluation-assistant"],
         )
 
+        # Set input on trace (user's message)
+        if trace:
+            trace.update(input={"message": message})
+
         # Call LLM with trace
         response_content = await self._call_llm(messages, trace=trace)
+
+        # Set output on trace (assistant's response) and end
+        if trace:
+            trace.end(output={"response": response_content})
 
         # Flush Langfuse events
         flush_langfuse()
