@@ -637,22 +637,51 @@ REASONING: [brief explanation]"""
                 seen[key] = resp  # Later responses override earlier ones
             unique_responses = list(seen.values())
 
+            # Build the final result
+            final_result = EvaluationResult(
+                query=request.query,
+                responses=unique_responses,
+                comparison_summary=final_state.get("comparison_summary") or ComparisonSummary(),
+            )
+
             yield {
                 "type": "complete",
-                "result": EvaluationResult(
-                    query=request.query,
-                    responses=unique_responses,
-                    comparison_summary=final_state.get("comparison_summary") or ComparisonSummary(),
-                ).model_dump(mode='json'),
+                "result": final_result.model_dump(mode='json'),
                 "session_id": thread_id,
                 "judge_results": final_state.get("judge_results", [])
             }
-        finally:
-            # Clean up trace and flush Langfuse events
+
+            # End the trace with output data
             if thread_id in self._traces:
                 trace = self._traces.pop(thread_id)
                 if trace and hasattr(trace, 'end'):
-                    trace.end()
+                    # Build output summary for Langfuse
+                    output_data = {
+                        "query": request.query,
+                        "model_count": len(unique_responses),
+                        "responses": [
+                            {
+                                "provider": r.provider if hasattr(r, 'provider') else r.get('provider'),
+                                "model": r.model if hasattr(r, 'model') else r.get('model'),
+                                "response_preview": (r.response if hasattr(r, 'response') else r.get('response', ''))[:500],
+                                "latency_ms": r.metrics.latency_ms if hasattr(r, 'metrics') else r.get('metrics', {}).get('latency_ms'),
+                                "quality_score": r.metrics.quality_score if hasattr(r, 'metrics') else r.get('metrics', {}).get('quality_score'),
+                                "error": r.error if hasattr(r, 'error') else r.get('error'),
+                            }
+                            for r in unique_responses
+                        ],
+                        "comparison_summary": final_result.comparison_summary.model_dump() if final_result.comparison_summary else None,
+                        "judge_results": final_state.get("judge_results", []),
+                    }
+                    trace.end(output=output_data)
+        except Exception as e:
+            # End trace with error if something goes wrong
+            if thread_id in self._traces:
+                trace = self._traces.pop(thread_id)
+                if trace and hasattr(trace, 'end'):
+                    trace.end(output={"error": str(e)})
+            raise
+        finally:
             flush_langfuse()
 
     async def run(
@@ -708,17 +737,45 @@ REASONING: [brief explanation]"""
         try:
             final_state = await graph.ainvoke(initial_state, config=config)
 
-            return EvaluationResult(
+            result = EvaluationResult(
                 query=request.query,
                 responses=final_state["responses"],
                 comparison_summary=final_state["comparison_summary"] or ComparisonSummary(),
             )
-        finally:
-            # Clean up trace and flush Langfuse events
+
+            # End the trace with output data
             if thread_id in self._traces:
                 trace = self._traces.pop(thread_id)
                 if trace and hasattr(trace, 'end'):
-                    trace.end()
+                    # Build output summary for Langfuse
+                    output_data = {
+                        "query": request.query,
+                        "model_count": len(final_state["responses"]),
+                        "responses": [
+                            {
+                                "provider": r.provider,
+                                "model": r.model,
+                                "response_preview": r.response[:500] if r.response else None,
+                                "latency_ms": r.metrics.latency_ms,
+                                "quality_score": r.metrics.quality_score,
+                                "error": r.error,
+                            }
+                            for r in final_state["responses"]
+                        ],
+                        "comparison_summary": result.comparison_summary.model_dump() if result.comparison_summary else None,
+                        "judge_results": final_state.get("judge_results", []),
+                    }
+                    trace.end(output=output_data)
+
+            return result
+        except Exception as e:
+            # End trace with error if something goes wrong
+            if thread_id in self._traces:
+                trace = self._traces.pop(thread_id)
+                if trace and hasattr(trace, 'end'):
+                    trace.end(output={"error": str(e)})
+            raise
+        finally:
             flush_langfuse()
 
     async def get_conversation_history(self, session_id: str) -> list[dict]:

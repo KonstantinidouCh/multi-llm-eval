@@ -1,4 +1,4 @@
-from .langfuse_client import get_langfuse, observe_llm_call, create_trace, flush_langfuse
+from .langfuse_client import observe_llm_call, create_trace, flush_langfuse, get_langfuse_low_level
 from .langfuse_evals import (
     LangfuseEvaluator,
     EvalType,
@@ -8,10 +8,10 @@ from .langfuse_evals import (
 )
 
 __all__ = [
-    "get_langfuse",
     "observe_llm_call",
     "create_trace",
     "flush_langfuse",
+    "get_langfuse_low_level",
     "LangfuseEvaluator",
     "EvalType",
     "EvalResult",

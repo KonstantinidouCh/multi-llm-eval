@@ -11,7 +11,7 @@ from typing import Optional, Any, Callable
 from dataclasses import dataclass
 from enum import Enum
 
-from .langfuse_client import get_langfuse_low_level, get_langfuse
+from .langfuse_client import get_langfuse_low_level
 from ...config import get_settings
 
 
