@@ -16,6 +16,7 @@ def _configure_langfuse_env():
         os.environ["LANGFUSE_SECRET_KEY"] = settings.langfuse_secret_key
         os.environ["LANGFUSE_PUBLIC_KEY"] = settings.langfuse_public_key
         os.environ["LANGFUSE_HOST"] = settings.langfuse_host
+        os.environ["LANGFUSE_TRACING_ENVIRONMENT"] = settings.langfuse_tracing_environment
 
 
 # Configure environment on module load
@@ -61,6 +62,7 @@ class LangfuseTrace:
         self.metadata = metadata or {}
         self.tags = tags or []
         self._context_manager = None
+        self._propagate_context = None
         self._span = None
         self._client = get_langfuse()
         self._low_level_client = get_langfuse_low_level()
@@ -81,6 +83,16 @@ class LangfuseTrace:
             )
             # Enter the context
             self._span = self._context_manager.__enter__()
+
+            # Propagate user_id if provided (for Langfuse user tracking)
+            if self.user_id:
+                try:
+                    from langfuse import propagate_attributes
+                    self._propagate_context = propagate_attributes(user_id=self.user_id)
+                    self._propagate_context.__enter__()
+                except Exception:
+                    pass
+
             # Try to capture trace ID for scoring
             if self._span and hasattr(self._span, 'trace_id'):
                 self._trace_id = self._span.trace_id
@@ -97,6 +109,16 @@ class LangfuseTrace:
         # Submit any pending scores before ending
         self._submit_scores()
 
+        # Exit propagate context first (inner context)
+        if self._propagate_context:
+            try:
+                self._propagate_context.__exit__(None, None, None)
+            except Exception:
+                pass
+            finally:
+                self._propagate_context = None
+
+        # Exit main observation context
         if self._context_manager:
             try:
                 self._context_manager.__exit__(None, None, None)

@@ -9,7 +9,9 @@ from alembic import context
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.infrastructure.persistence.database import Base
-from app.infrastructure.persistence.models import EvaluationDB, LLMResponseDB, LLMModelDB
+from app.infrastructure.persistence.models import (
+    EvaluationDB, LLMResponseDB, LLMModelDB, UserDB, ChatSessionDB, ChatMessageDB
+)
 from app.config import get_settings
 
 config = context.config

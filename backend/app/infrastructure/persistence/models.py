@@ -6,6 +6,53 @@ import uuid
 from .database import Base
 
 
+class UserDB(Base):
+    """Database model for storing user accounts"""
+    __tablename__ = "users"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    email = Column(String(255), unique=True, nullable=False, index=True)
+    username = Column(String(100), unique=True, nullable=False, index=True)
+    hashed_password = Column(String(255), nullable=False)
+    is_active = Column(Boolean, default=True)
+    is_admin = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    evaluations = relationship("EvaluationDB", back_populates="user", lazy="selectin")
+    chat_sessions = relationship("ChatSessionDB", back_populates="user", lazy="selectin")
+
+
+class ChatSessionDB(Base):
+    """Database model for storing chat sessions"""
+    __tablename__ = "chat_sessions"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
+    title = Column(String(255), default="New Chat")
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationships
+    user = relationship("UserDB", back_populates="chat_sessions")
+    messages = relationship("ChatMessageDB", back_populates="session", cascade="all, delete-orphan", lazy="selectin")
+
+
+class ChatMessageDB(Base):
+    """Database model for storing chat messages"""
+    __tablename__ = "chat_messages"
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    session_id = Column(String(36), ForeignKey("chat_sessions.id", ondelete="CASCADE"), nullable=False, index=True)
+    role = Column(String(20), nullable=False)  # 'user' or 'assistant'
+    content = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relationship
+    session = relationship("ChatSessionDB", back_populates="messages")
+
+
 class LLMModelDB(Base):
     """Database model for storing LLM model configurations"""
     __tablename__ = "llm_models"
@@ -29,6 +76,7 @@ class EvaluationDB(Base):
     __tablename__ = "evaluations"
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String(36), ForeignKey("users.id", ondelete="CASCADE"), nullable=True, index=True)
     query = Column(Text, nullable=False)
     timestamp = Column(DateTime, default=datetime.utcnow, index=True)
 
@@ -38,7 +86,8 @@ class EvaluationDB(Base):
     most_cost_effective = Column(String(100), default="")
     best_overall = Column(String(100), default="")
 
-    # Relationship to responses
+    # Relationships
+    user = relationship("UserDB", back_populates="evaluations")
     responses = relationship(
         "LLMResponseDB",
         back_populates="evaluation",

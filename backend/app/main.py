@@ -3,6 +3,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .interfaces.api import router
+from .interfaces.api.auth import router as auth_router
 from .config import get_settings
 from .infrastructure.persistence import init_db, close_db
 
@@ -37,6 +38,7 @@ app.add_middleware(
 
 # Include API routes
 app.include_router(router)
+app.include_router(auth_router)
 
 
 @app.get("/")

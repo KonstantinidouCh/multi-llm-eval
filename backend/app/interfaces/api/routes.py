@@ -22,9 +22,11 @@ from ...infrastructure.persistence import (
     PostgresModelRepository,
     get_session_maker,
 )
+from ...infrastructure.persistence.models import UserDB
 from ...infrastructure.langgraph import EvaluationGraph
 from ...application.use_cases import MetricsCalculator
 from ...application.services import ChatService
+from .auth import get_current_user, get_current_user_required
 from fastapi.responses import StreamingResponse
 import json
 
@@ -140,6 +142,7 @@ async def get_providers(settings: Settings = Depends(get_settings)):
 async def evaluate(
     request: EvaluationRequest,
     settings: Settings = Depends(get_settings),
+    current_user: Optional[UserDB] = Depends(get_current_user),
 ):
     """Evaluate a query across multiple LLM models"""
     if not request.query.strip():
@@ -153,19 +156,27 @@ async def evaluate(
     graph = get_evaluation_graph(settings)
     repository = get_evaluation_repository(settings)
 
+    # Get user_id for Langfuse tracking
+    user_id = current_user.id if current_user else None
+
     try:
-        result = await graph.run(request)
-        await repository.save(result)
+        result = await graph.run(request, user_id=user_id)
+        await repository.save(result, user_id=user_id)
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/history", response_model=List[EvaluationResult])
-async def get_history(limit: int = 50, settings: Settings = Depends(get_settings)):
-    """Get evaluation history"""
+async def get_history(
+    limit: int = 50,
+    settings: Settings = Depends(get_settings),
+    current_user: Optional[UserDB] = Depends(get_current_user),
+):
+    """Get evaluation history (filtered by user if authenticated)"""
     repository = get_evaluation_repository(settings)
-    return await repository.get_all(limit)
+    user_id = current_user.id if current_user else None
+    return await repository.get_all(limit, user_id=user_id)
 
 
 @router.get("/evaluations/{evaluation_id}", response_model=EvaluationResult)
@@ -201,6 +212,7 @@ async def health_check():
 async def evaluate_stream(
     request: EvaluationRequest,
     settings: Settings = Depends(get_settings),
+    current_user: Optional[UserDB] = Depends(get_current_user),
 ):
     """Stream evaluation progress"""
     if not request.query.strip():
@@ -212,10 +224,13 @@ async def evaluate_stream(
     graph = get_evaluation_graph(settings)
     repository = get_evaluation_repository(settings)
 
+    # Get user_id for Langfuse tracking
+    user_id = current_user.id if current_user else None
+
     async def event_generator():
         final_result = None
         try:
-            async for event in graph.run_streaming(request):
+            async for event in graph.run_streaming(request, user_id=user_id):
                 # Capture the final result when complete
                 if event.get("type") == "complete" and "result" in event:
                     final_result = event["result"]
@@ -226,7 +241,7 @@ async def evaluate_stream(
                 try:
                     from ...domain.entities import EvaluationResult
                     result = EvaluationResult(**final_result)
-                    await repository.save(result)
+                    await repository.save(result, user_id=user_id)
                 except Exception as save_error:
                     print(f"Error saving result: {save_error}")
         except Exception as e:
@@ -399,15 +414,19 @@ async def seed_models(settings: Settings = Depends(get_settings)):
 async def chat(
     request: ChatRequest,
     settings: Settings = Depends(get_settings),
+    current_user: Optional[UserDB] = Depends(get_current_user),
 ):
     """Send a message to the chatbot and get a response about evaluation history"""
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="Message cannot be empty")
 
     chat_service = get_chat_service(settings)
+    user_id = current_user.id if current_user else None
+
     assistant_message, session_id = await chat_service.chat(
         message=request.message,
         session_id=request.session_id,
+        user_id=user_id,
     )
 
     return ChatResponse(message=assistant_message, session_id=session_id)

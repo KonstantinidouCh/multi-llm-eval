@@ -16,6 +16,72 @@ const api = axios.create({
   },
 });
 
+// Add auth token to requests
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem("token");
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+// Auth types
+export interface User {
+  id: string;
+  email: string;
+  username: string;
+  is_active: boolean;
+  is_admin: boolean;
+  created_at: string;
+}
+
+export interface AuthToken {
+  access_token: string;
+  token_type: string;
+}
+
+export interface LoginRequest {
+  username: string;
+  password: string;
+}
+
+export interface RegisterRequest {
+  email: string;
+  username: string;
+  password: string;
+}
+
+// Auth API
+export const authApi = {
+  login: async (data: LoginRequest): Promise<AuthToken> => {
+    const response = await api.post("/auth/login/json", data);
+    return response.data;
+  },
+
+  register: async (data: RegisterRequest): Promise<AuthToken> => {
+    const response = await api.post("/auth/register", data);
+    return response.data;
+  },
+
+  getCurrentUser: async (): Promise<User> => {
+    const response = await api.get("/auth/me");
+    return response.data;
+  },
+
+  verifyToken: async (): Promise<User> => {
+    const response = await api.post("/auth/verify");
+    return response.data;
+  },
+};
+
+// Helper to get token for fetch requests
+export const getAuthHeaders = (): HeadersInit => {
+  const token = localStorage.getItem("token");
+  return token
+    ? { "Content-Type": "application/json", Authorization: `Bearer ${token}` }
+    : { "Content-Type": "application/json" };
+};
+
 export const llmApi = {
   getProviders: async (): Promise<LLMProvider[]> => {
     const response = await api.get("/providers");
@@ -43,7 +109,7 @@ export const llmApi = {
   ): Promise<EvaluationResult | null> => {
     const response = await fetch("/api/evaluate/stream", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: getAuthHeaders(),
       body: JSON.stringify(request),
     });
 

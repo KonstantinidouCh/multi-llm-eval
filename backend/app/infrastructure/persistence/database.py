@@ -52,3 +52,15 @@ async def close_db():
         await _engine.dispose()
         _engine = None
         _async_session_maker = None
+
+
+async def get_db():
+    """FastAPI dependency that yields a database session"""
+    from ...config import get_settings
+    settings = get_settings()
+    session_maker = get_session_maker(settings.database_url)
+    async with session_maker() as session:
+        try:
+            yield session
+        finally:
+            await session.close()

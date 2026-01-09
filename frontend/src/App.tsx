@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react";
 import { QueryInput } from "@/components/QueryInput";
 import { ResultsDisplay } from "@/components/ResultsDisplay";
+import { LoginPage } from "@/components/LoginPage";
 import { llmApi } from "@/services/api";
 import {
   type EvaluationResult,
@@ -22,12 +23,16 @@ import {
   ChevronUp,
   ChevronDown,
   MessageCircle,
+  LogOut,
+  User,
 } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { ComparisonSummary } from "./components/ComparisonSummary";
 import { ChatPanel } from "./components/ChatPanel";
+import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 
-function App() {
+function AppContent() {
+  const { user, logout } = useAuth();
   const [providers, setProviders] = useState<LLMProvider[]>([]);
   const [currentResult, setCurrentResult] = useState<EvaluationResult | null>(
     null
@@ -44,10 +49,20 @@ function App() {
   // Chat state
   const [isChatOpen, setIsChatOpen] = useState(false);
 
+  // Show login page state
+  const [showLogin, setShowLogin] = useState(false);
+
   useEffect(() => {
     loadProviders();
     loadHistory();
-  }, []);
+  }, [user]);
+
+  // Close login modal when user logs in
+  useEffect(() => {
+    if (user) {
+      setShowLogin(false);
+    }
+  }, [user]);
 
   const loadProviders = async () => {
     try {
@@ -184,12 +199,41 @@ function App() {
                 Multi-LLM Eval
               </h1>
             </div>
-            <Badge
-              variant="outline"
-              className="border-violet-300 text-violet-600"
-            >
-              v0.1.0
-            </Badge>
+            <div className="flex items-center gap-3">
+              {user ? (
+                <>
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <User className="h-4 w-4" />
+                    <span>{user.username}</span>
+                  </div>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={logout}
+                    className="text-muted-foreground hover:text-foreground"
+                  >
+                    <LogOut className="h-4 w-4 mr-1" />
+                    Logout
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowLogin(true)}
+                  className="border-violet-300 text-violet-600 hover:bg-violet-50"
+                >
+                  <User className="h-4 w-4 mr-1" />
+                  Sign In
+                </Button>
+              )}
+              <Badge
+                variant="outline"
+                className="border-violet-300 text-violet-600"
+              >
+                v0.1.0
+              </Badge>
+            </div>
           </div>
         </div>
       </header>
@@ -434,7 +478,32 @@ function App() {
 
       {/* Chat Panel */}
       <ChatPanel isOpen={isChatOpen} onClose={() => setIsChatOpen(false)} />
+
+      {/* Login Modal */}
+      {showLogin && !user && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="absolute -top-2 -right-2 z-10 bg-white rounded-full h-8 w-8 p-0"
+              onClick={() => setShowLogin(false)}
+            >
+              &times;
+            </Button>
+            <LoginPage isModal />
+          </div>
+        </div>
+      )}
     </div>
+  );
+}
+
+function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
 

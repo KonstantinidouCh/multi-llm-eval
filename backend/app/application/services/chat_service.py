@@ -115,8 +115,8 @@ Available metrics to discuss:
         user_message = ChatMessage(role="user", content=message)
         session_history.append(user_message)
 
-        # Fetch recent evaluations for context
-        evaluations = await self.evaluation_repository.get_all(limit=20)
+        # Fetch recent evaluations for context (filtered by user if authenticated)
+        evaluations = await self.evaluation_repository.get_all(limit=20, user_id=user_id)
 
         # Build messages for LLM
         system_prompt = self._build_system_prompt(evaluations)

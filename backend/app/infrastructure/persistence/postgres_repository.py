@@ -53,12 +53,13 @@ class PostgresEvaluationRepository(EvaluationRepository):
             ),
         )
 
-    async def save(self, evaluation: EvaluationResult) -> None:
+    async def save(self, evaluation: EvaluationResult, user_id: Optional[str] = None) -> None:
         """Save an evaluation result"""
         async with self._session_maker() as session:
             # Create evaluation record
             db_eval = EvaluationDB(
                 id=evaluation.id,
+                user_id=user_id,
                 query=evaluation.query,
                 timestamp=evaluation.timestamp,
                 fastest=evaluation.comparison_summary.fastest,
@@ -102,14 +103,16 @@ class PostgresEvaluationRepository(EvaluationRepository):
 
             return self._db_to_entity(db_eval)
 
-    async def get_all(self, limit: int = 50) -> List[EvaluationResult]:
-        """Get all evaluations, ordered by timestamp descending"""
+    async def get_all(self, limit: int = 50, user_id: Optional[str] = None) -> List[EvaluationResult]:
+        """Get all evaluations, ordered by timestamp descending. Optionally filter by user_id."""
         async with self._session_maker() as session:
-            result = await session.execute(
-                select(EvaluationDB)
-                .order_by(EvaluationDB.timestamp.desc())
-                .limit(limit)
-            )
+            query = select(EvaluationDB).order_by(EvaluationDB.timestamp.desc()).limit(limit)
+
+            # Filter by user_id if provided
+            if user_id:
+                query = query.where(EvaluationDB.user_id == user_id)
+
+            result = await session.execute(query)
             db_evals = result.scalars().all()
 
             return [self._db_to_entity(e) for e in db_evals]
