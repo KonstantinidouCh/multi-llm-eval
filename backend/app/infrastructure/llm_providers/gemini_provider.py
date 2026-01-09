@@ -67,14 +67,32 @@ class GeminiProvider(BaseLLMProvider):
                 error_detail = ""
                 try:
                     error_data = e.response.json()
-                    error_detail = error_data.get("error", {}).get("message", e.response.text)
-                except:
-                    error_detail = e.response.text
+                    error_obj = error_data.get("error", {})
+                    if isinstance(error_obj, dict):
+                        error_detail = error_obj.get("message", e.response.text)
+                        error_status = error_obj.get("status", "")
+                        if error_status:
+                            error_detail = f"{error_detail} (status: {error_status})"
+                    else:
+                        error_detail = str(error_obj) or e.response.text
+                except Exception:
+                    error_detail = e.response.text[:500] if e.response.text else str(e.response.status_code)
 
                 if e.response.status_code == 401:
-                    raise Exception("Invalid Gemini API Key")
+                    raise Exception(f"Invalid Gemini API Key: {error_detail}")
+                if e.response.status_code == 403:
+                    raise Exception(f"Gemini API access forbidden: {error_detail}")
                 if e.response.status_code == 404:
-                    raise Exception(f"Model {model} not found or not available")
+                    raise Exception(f"Model {model} not found or not available: {error_detail}")
                 if e.response.status_code == 422:
                     raise Exception(f"Model {model} validation error: {error_detail}")
-                raise Exception(f"Gemini API error: {e.response.status_code} - {error_detail}")
+                if e.response.status_code == 429:
+                    raise Exception(f"Gemini rate limit exceeded: {error_detail}")
+                if e.response.status_code == 503:
+                    raise Exception(f"Gemini service unavailable: {error_detail}")
+                raise Exception(f"Gemini API error {e.response.status_code}: {error_detail}")
+
+            except httpx.ConnectError as e:
+                raise Exception(f"Failed to connect to Gemini API: {str(e)}")
+            except httpx.TimeoutException:
+                raise Exception(f"Gemini API request timed out after 120 seconds")

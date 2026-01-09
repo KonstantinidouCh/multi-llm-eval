@@ -58,28 +58,49 @@ class OllamaProvider(BaseLLMProvider):
 
     async def _call_api(self, prompt: str, model: str) -> tuple[str, int, int]:
         async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{self.base_url}/api/generate",
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "options": {
-                        "temperature": 0.7,
-                        "num_predict": 1024,
+            try:
+                response = await client.post(
+                    f"{self.base_url}/api/generate",
+                    json={
+                        "model": model,
+                        "prompt": prompt,
+                        "stream": False,
+                        "options": {
+                            "temperature": 0.7,
+                            "num_predict": 1024,
+                        },
                     },
-                },
-                timeout=120.0,  # Local models can be slow
-            )
-            response.raise_for_status()
-            data = response.json()
+                    timeout=120.0,  # Local models can be slow
+                )
+                response.raise_for_status()
+                data = response.json()
 
-            content = data.get("response", "")
-            # Ollama provides token counts
-            input_tokens = data.get("prompt_eval_count", 0)
-            output_tokens = data.get("eval_count", 0)
+                content = data.get("response", "")
+                # Ollama provides token counts
+                input_tokens = data.get("prompt_eval_count", 0)
+                output_tokens = data.get("eval_count", 0)
 
-            return content, input_tokens, output_tokens
+                return content, input_tokens, output_tokens
+
+            except httpx.HTTPStatusError as e:
+                error_detail = ""
+                try:
+                    error_data = e.response.json()
+                    # Ollama returns error in {"error": "message"}
+                    error_detail = error_data.get("error", e.response.text)
+                except Exception:
+                    error_detail = e.response.text[:500] if e.response.text else str(e.response.status_code)
+
+                if e.response.status_code == 404:
+                    raise Exception(f"Model '{model}' not found in Ollama. Run 'ollama pull {model}' to download it. Details: {error_detail}")
+                if e.response.status_code == 500:
+                    raise Exception(f"Ollama server error: {error_detail}")
+                raise Exception(f"Ollama API error {e.response.status_code}: {error_detail}")
+
+            except httpx.ConnectError:
+                raise Exception(f"Failed to connect to Ollama at {self.base_url}. Make sure Ollama is running.")
+            except httpx.TimeoutException:
+                raise Exception(f"Ollama request timed out after 120 seconds. The model may be too slow or overloaded.")
 
     def _get_cost_per_token(self, model: str) -> tuple[float, float]:
         # Ollama is local and free

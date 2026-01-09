@@ -81,14 +81,27 @@ class HuggingFaceProvider(BaseLLMProvider):
                 error_detail = ""
                 try:
                     error_data = e.response.json()
-                    error_detail = error_data.get("error", {}).get("message", e.response.text)
-                except:
-                    error_detail = e.response.text
+                    error_obj = error_data.get("error", {})
+                    if isinstance(error_obj, dict):
+                        error_detail = error_obj.get("message", e.response.text)
+                    else:
+                        error_detail = str(error_obj) or e.response.text
+                except Exception:
+                    error_detail = e.response.text[:500] if e.response.text else str(e.response.status_code)
 
                 if e.response.status_code == 401:
-                    raise Exception("Invalid HuggingFace API Key")
+                    raise Exception(f"Invalid HuggingFace API Key: {error_detail}")
                 if e.response.status_code == 404:
-                    raise Exception(f"Model {model} not found or not available")
+                    raise Exception(f"Model {model} not found or not available: {error_detail}")
                 if e.response.status_code == 422:
                     raise Exception(f"Model {model} validation error: {error_detail}")
-                raise Exception(f"HuggingFace API error: {e.response.status_code} - {error_detail}")
+                if e.response.status_code == 429:
+                    raise Exception(f"HuggingFace rate limit exceeded: {error_detail}")
+                if e.response.status_code == 503:
+                    raise Exception(f"HuggingFace service unavailable (model may be loading): {error_detail}")
+                raise Exception(f"HuggingFace API error {e.response.status_code}: {error_detail}")
+
+            except httpx.ConnectError as e:
+                raise Exception(f"Failed to connect to HuggingFace API: {str(e)}")
+            except httpx.TimeoutException:
+                raise Exception(f"HuggingFace API request timed out after 120 seconds")
